@@ -94,8 +94,9 @@ revokd -config /etc/revokd.hcl -once    # one sync, for cron: exit 1 when a list
 
 ## Measured
 
-- **A real sshd judges what revokd writes** (`TestSSHDJudgesWhatRevokdWrites`,
-  OpenSSH 10.3p1 here and the Ubuntu runner's on CI). A certificate logs in with
+- **A real sshd judges what revokd writes** (`TestSSHDJudgesWhatRevokdWrites`:
+  OpenSSH 10.3p1 on macOS, and 9.6p1 on the Ubuntu CI runner, a single-file
+  `RevokedKeys` sshd). A certificate logs in with
   nothing revoked; once its serial is revoked it is refused; with a list
   revoking nothing that then lapses, it is refused (the fail-closed list); with
   a fresh list it logs in again. sshd is never restarted. Removing the
