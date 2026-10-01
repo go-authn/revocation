@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +43,29 @@ type Source struct {
 	Clock func() time.Time
 }
 
+// FilePath is the local path a file:// URL names: file:///etc/x is
+// /etc/x, and on Windows file:///C:/x is C:\x (RFC 8089, appendix E.2).
+func FilePath(u string) (string, error) {
+	p, err := url.Parse(u)
+	if err != nil || p.Scheme != "file" || (p.Host != "" && p.Host != "localhost") || p.Path == "" {
+		return "", fmt.Errorf("revocation: %q is not a file URL of a local path", u)
+	}
+	path := p.Path
+	if runtime.GOOS == "windows" && len(path) >= 3 && path[0] == '/' && path[2] == ':' {
+		path = path[1:]
+	}
+	return filepath.FromSlash(path), nil
+}
+
+// FileURL is the file:// URL of a local path, the inverse of FilePath.
+func FileURL(path string) string {
+	p := filepath.ToSlash(path)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p // C:/x -> /C:/x
+	}
+	return (&url.URL{Scheme: "file", Path: p}).String()
+}
+
 // maxSig bounds a signature: an armored SSHSIG by the largest RSA key is a
 // few kilobytes.
 const maxSig = 64 << 10
@@ -66,7 +91,11 @@ func NewFetcher(src Source, held *List) (*Fetcher, error) {
 		return nil, fmt.Errorf("revocation: %q: %w", src.URL, err)
 	}
 	switch u.Scheme {
-	case "http", "https", "file":
+	case "http", "https":
+	case "file":
+		if _, err := FilePath(src.URL); err != nil {
+			return nil, err
+		}
 	default:
 		return nil, fmt.Errorf("revocation: %q: an http, https or file URL", src.URL)
 	}
@@ -177,7 +206,11 @@ func maxSizeOf(k Kind) int64 {
 // get fetches u, at most limit bytes, with the conditional header cond when
 // tag is not empty; it returns the body and its ETag.
 func (f *Fetcher) get(ctx context.Context, u string, limit int64, cond, tag string) ([]byte, string, error) {
-	if path, ok := strings.CutPrefix(u, "file://"); ok {
+	if strings.HasPrefix(u, "file://") {
+		path, err := FilePath(u)
+		if err != nil {
+			return nil, "", err
+		}
 		fh, err := os.Open(path)
 		if err != nil {
 			return nil, "", fmt.Errorf("revocation: %w", err)

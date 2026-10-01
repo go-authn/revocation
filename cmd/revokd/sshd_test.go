@@ -93,14 +93,14 @@ func TestSSHDJudgesWhatRevokdWrites(t *testing.T) {
 	a := agentFor(t, dir, fmt.Sprintf(`
 state_dir = %q
 source "e2e" {
-  url    = "file://%s"
+  url    = %q
   ssh_ca = %q
 }
 output "sshd" {
   path    = %q
   sources = ["e2e"]
 }
-`, at("state"), at("issued.krl"), at("ca.pub"), at("revoked.krl")))
+`, at("state"), revocation.FileURL(at("issued.krl")), at("ca.pub"), at("revoked.krl")))
 	sync := func() { a.syncOnce(context.Background()) }
 	sync()
 

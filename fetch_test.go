@@ -198,7 +198,7 @@ func TestFetchCRLAndFiles(t *testing.T) {
 	now := time.Now()
 	dir := t.TempDir()
 	p := write(t, dir, "ca.crl", ca.crl(t, 3, now.Add(-time.Minute), now.Add(time.Hour), nil, 42))
-	f, err := NewFetcher(Source{URL: "file://" + p, Kind: CRL, X509CA: ca.cert, MaxAge: time.Hour}, nil)
+	f, err := NewFetcher(Source{URL: FileURL(p), Kind: CRL, X509CA: ca.cert, MaxAge: time.Hour}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,8 +277,30 @@ func TestNewFetcherRefusals(t *testing.T) {
 			t.Errorf("%+v: accepted", s)
 		}
 	}
-	f, err := NewFetcher(Source{URL: "file://" + filepath.Join(t.TempDir(), "x"), Kind: KRL, SSHCA: ca.pub}, nil)
+	f, err := NewFetcher(Source{URL: FileURL(filepath.Join(t.TempDir(), "x")), Kind: KRL, SSHCA: ca.pub}, nil)
 	if err != nil || f.src.Client == nil || f.Held() != nil {
 		t.Errorf("defaults: %v", err)
+	}
+}
+
+func TestFileURLs(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "a b", "l.krl")
+	u := FileURL(p)
+	if !strings.HasPrefix(u, "file:///") {
+		t.Errorf("FileURL(%q) = %q", p, u)
+	}
+	if back, err := FilePath(u); err != nil || back != p {
+		t.Errorf("FilePath(FileURL(%q)) = %q, %v", p, back, err)
+	}
+	if back, err := FilePath("file://localhost/etc/x"); err != nil || filepath.ToSlash(back) != "/etc/x" {
+		t.Errorf("localhost: %q %v", back, err)
+	}
+	for _, bad := range []string{"file://host.example/x", "https://x/y", "file://", "%zz"} {
+		if _, err := FilePath(bad); err == nil {
+			t.Errorf("FilePath(%q): no error", bad)
+		}
+	}
+	if _, err := NewFetcher(Source{URL: "file://host.example/x", Kind: KRL, SSHCA: newSSHCA(t).pub}, nil); err == nil {
+		t.Error("a file URL on another host: accepted")
 	}
 }
