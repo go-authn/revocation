@@ -35,6 +35,10 @@ type Source struct {
 	// Client fetches http and https URLs; nil is a client with a one
 	// minute timeout.
 	Client *http.Client
+	// Clock is the time a list's currency is judged at; nil is time.Now.
+	// One clock for the fetcher and its caller, or they disagree on what
+	// is current.
+	Clock func() time.Time
 }
 
 // maxSig bounds a signature: an armored SSHSIG by the largest RSA key is a
@@ -77,7 +81,11 @@ func NewFetcher(src Source, held *List) (*Fetcher, error) {
 	if src.Client == nil {
 		src.Client = &http.Client{Timeout: time.Minute}
 	}
-	return &Fetcher{src: src, now: time.Now, held: held}, nil
+	now := src.Clock
+	if now == nil {
+		now = time.Now
+	}
+	return &Fetcher{src: src, now: now, held: held}, nil
 }
 
 // Held is the last list that verified, or nil.

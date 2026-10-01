@@ -79,9 +79,9 @@ func TestVerifyCRLRefusesWhatGoWillNotWrite(t *testing.T) {
 		tbs  rawTBS
 		want string
 	}{
-		"no CRL number":     {rawTBS{ThisUpdate: now, NextUpdate: now.Add(time.Hour)}, "no CRL number"},
-		"no nextUpdate":     {rawTBS{ThisUpdate: now, Extensions: []pkix.Extension{number(3)}}, "no nextUpdate"},
-		"next before this":  {rawTBS{ThisUpdate: now, NextUpdate: now.Add(-time.Hour), Extensions: []pkix.Extension{number(3)}}, "not after"},
+		"no CRL number":    {rawTBS{ThisUpdate: now, NextUpdate: now.Add(time.Hour)}, "no CRL number"},
+		"no nextUpdate":    {rawTBS{ThisUpdate: now, Extensions: []pkix.Extension{number(3)}}, "no nextUpdate"},
+		"next before this": {rawTBS{ThisUpdate: now, NextUpdate: now.Add(-time.Hour), Extensions: []pkix.Extension{number(3)}}, "not after"},
 		"critical in entry": {rawTBS{ThisUpdate: now, NextUpdate: now.Add(time.Hour), Extensions: []pkix.Extension{number(3)},
 			Revoked: []rawEntry{{Serial: big.NewInt(9), Revoked: now, Extensions: []pkix.Extension{{Id: asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 99999, 3}, Critical: true, Value: []byte{5, 0}}}}}}, "entry"},
 	} {
