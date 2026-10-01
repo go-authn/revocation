@@ -17,11 +17,13 @@ OpenSSH has no mechanism to distribute a KRL; the practice is configuration
 management, `rsync` or a `cron` job fetching over HTTPS. Two things are then
 missing, whatever the transport:
 
-- **Authenticity.** A KRL is not signed. OpenSSH stopped verifying the KRL
-  signature section and, from 9.4, refuses a KRL that has one (PROTOCOL.krl,
-  section 6). So a KRL is exactly as authentic as the last hop that carried
-  it, and a mirror, a cache or a compromised web server can serve an empty
-  one.
+- **Authenticity.** A KRL is not signed. OpenSSH never verifies the KRL
+  signature section. PROTOCOL.krl section 6 says "OpenSSH >= 9.4 will refuse
+  to load KRLs that contain signatures"; measured, `ssh-keygen` 9.6p1 and
+  10.3p1 load such a KRL and skip the signature (go-authn/krl's
+  `TestOracleSigned`). Either way, a KRL is exactly as authentic as the last
+  hop that carried it, and a mirror, a cache or a compromised web server can
+  serve an empty one.
 - **Freshness.** Neither `sshd` nor a KRL has a notion of a list's end: a copy
   that stopped updating months ago is read as the current one. TUF calls
   serving it an *indefinite freeze attack* ("an attacker cannot respond to
