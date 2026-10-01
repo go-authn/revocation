@@ -27,7 +27,7 @@ func SignKRL(raw []byte, ca ssh.Signer) ([]byte, error) {
 		return nil, fmt.Errorf("revocation: the KRL does not say when it expires (no %s extension)", krl.ExtensionExpires)
 	}
 	if k.Signed {
-		return nil, errors.New("revocation: the KRL has a signature section, which sshd refuses from OpenSSH 9.4")
+		return nil, errors.New("revocation: the KRL has a signature section, which OpenSSH never verifies and PROTOCOL.krl says it refuses from 9.4: an SSHSIG signature is the one to give")
 	}
 	s, err := sshsig.SignWithRand(bytes.NewReader(raw), rand.Reader, ca, sshsig.HashSHA512, Namespace)
 	if err != nil {

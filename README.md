@@ -17,9 +17,10 @@ anything in between and without ever mistaking a stale list for a current one**.
 OpenSSH has no way to distribute a KRL. Practice is configuration management,
 `rsync` or `cron` with `curl`, and two things are missing whatever the transport:
 
-- **A KRL is not signed.** OpenSSH stopped verifying the KRL signature section,
-  and from 9.4 refuses a KRL that has one. So a KRL is only as authentic as the
-  last hop that carried it.
+- **A KRL is not signed.** OpenSSH never verifies the KRL signature section.
+  PROTOCOL.krl says 9.4 and later refuse a KRL that has one; measured,
+  `ssh-keygen` 9.6p1 and 10.3p1 load it and skip the signature. Either way, a
+  KRL is only as authentic as the last hop that carried it.
 - **Nothing says a KRL is stale.** `sshd` reads a file that stopped updating
   months ago as the current list. TUF calls serving such a file an *indefinite
   freeze attack*.

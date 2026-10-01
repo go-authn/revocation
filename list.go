@@ -86,8 +86,10 @@ const maxCRL = 64 << 20
 // key ca. It refuses: a signature by any other key, in another namespace, or
 // in the RSA SHA-1 form PROTOCOL.sshsig forbids (hiddeco/sshsig refuses it
 // when it reads the signature; x/crypto alone would verify it); a KRL sshd would not load
-// (go-authn/krl refuses what OpenSSH refuses, and OpenSSH from 9.4 refuses
-// a KRL with a signature section); and a KRL that does not say when it
+// (go-authn/krl refuses what OpenSSH refuses), or one with the old
+// signature section, which OpenSSH never verifies and which PROTOCOL.krl
+// says 9.4 and later refuse -- measured, 9.6p1 and 10.3p1 load it, so
+// whether a given sshd does is not something to rely on; and a KRL that does not say when it
 // expires, which a reader could never tell from a stale one.
 func VerifyKRL(raw, sig []byte, ca ssh.PublicKey) (*List, error) {
 	if ca == nil {
@@ -105,7 +107,7 @@ func VerifyKRL(raw, sig []byte, ca ssh.PublicKey) (*List, error) {
 		return nil, fmt.Errorf("revocation: %w", err)
 	}
 	if k.Signed {
-		return nil, errors.New("revocation: the KRL has a signature section, which sshd refuses from OpenSSH 9.4")
+		return nil, errors.New("revocation: the KRL has a signature section, which OpenSSH never verifies and PROTOCOL.krl says it refuses from 9.4: an SSHSIG signature is the one to give")
 	}
 	if k.Expires.IsZero() {
 		return nil, fmt.Errorf("revocation: the KRL does not say when it expires (no %s extension)", krl.ExtensionExpires)

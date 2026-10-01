@@ -144,8 +144,10 @@ func mustSignNS(t *testing.T, ca sshCA, b []byte, ns string) []byte {
 	return sshsig.Armor(s)
 }
 
-// A KRL carrying the old signature section: OpenSSH from 9.4 refuses to
-// load it, so a distributor must not hand it to sshd, however well signed.
+// A KRL carrying the old signature section: never verified by OpenSSH, and
+// refused from 9.4 by PROTOCOL.krl's account -- though 9.6p1 and 10.3p1 load
+// it. Whether a given sshd does is not something to rely on, so a
+// distributor does not hand one on.
 func TestVerifyKRLRefusesASignatureSection(t *testing.T) {
 	ca := newSSHCA(t)
 	now := time.Now()
@@ -156,7 +158,7 @@ func TestVerifyKRLRefusesASignatureSection(t *testing.T) {
 	if k, err := krl.Parse(raw); err != nil || !k.Signed {
 		t.Fatalf("control: the crafted section is not read as one: %v", err)
 	}
-	if _, err := VerifyKRL(raw, mustSign(t, ca, raw), ca.pub); err == nil || !strings.Contains(err.Error(), "9.4") {
+	if _, err := VerifyKRL(raw, mustSign(t, ca, raw), ca.pub); err == nil || !strings.Contains(err.Error(), "signature section") {
 		t.Errorf("a KRL with a signature section: %v", err)
 	}
 	if _, err := SignKRL(raw, ca.signer); err == nil {
