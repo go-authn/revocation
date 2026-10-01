@@ -1,0 +1,118 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+  CGO_ENABLED: "0"
+  # The judges are OpenSSH (ssh-keygen, and a real sshd logged into with
+  # ssh) and OpenSSL. With these set, a lane where they are missing FAILS
+  # instead of skipping. Windows runs the pure-Go tests.
+  REVOCATION_REQUIRE_OPENSSH: "1"
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          check-latest: true
+          cache: true
+      - name: sshd, the judge of what revokd writes
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq openssh-server openssh-client
+          echo "REVOCATION_REQUIRE_SSHD=1" >> "$GITHUB_ENV"
+      - name: judge versions
+        if: matrix.os != 'windows-latest'
+        run: ssh -V; openssl version
+      - name: no OpenSSH judge on Windows
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: echo "REVOCATION_REQUIRE_OPENSSH=0" >> "$GITHUB_ENV"
+      - run: go vet ./...
+      - name: gofmt
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files are not gofmt-clean:"; echo "$unformatted"; exit 1
+          fi
+      - run: go test -count=1 -v ./...
+
+  race:
+    name: race detector
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with: { go-version: stable, check-latest: true, cache: true }
+      - run: go test -race -count=1 ./...
+
+  coverage:
+    name: coverage (floor 93%, the standard is 100%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with: { go-version: stable, check-latest: true, cache: true }
+      - run: |
+          FLOOR=93.0
+          # The output is kept and shown on failure: sent to /dev/null, a
+          # failing test here would be an exit code and nothing else.
+          if ! go test -coverprofile=cover.out -coverpkg=./... ./... > test.log 2>&1; then
+            grep -E -B2 -A25 -- '--- FAIL|^panic:|build failed' test.log || tail -100 test.log
+            exit 1
+          fi
+          go tool cover -func=cover.out
+          cov=$(go tool cover -func=cover.out | tail -1 | awk '{print $3}' | tr -d '%')
+          echo "coverage: ${cov}%  floor: ${FLOOR}%  standard: 100%"
+          if awk -v c="$cov" -v f="$FLOOR" 'BEGIN{exit !(c+0 < f+0)}'; then
+            echo "::error::coverage ${cov}% fell below the recorded floor ${FLOOR}%"
+            exit 1
+          fi
+
+  arches:
+    name: arch ${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    env:
+      REVOCATION_REQUIRE_OPENSSH: "0"
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64, riscv64, loong64, ppc64le, s390x]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with: { go-version: stable, check-latest: true, cache: true }
+      - run: GOARCH=${{ matrix.goarch }} go build ./...
+      - name: Install qemu-user-static
+        if: matrix.goarch != 'amd64' && matrix.goarch != 'arm64'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static
+      - name: Test
+        run: |
+          case "${{ matrix.goarch }}" in
+            amd64|arm64) go test -count=1 ./... ;;
+            riscv64)  GOARCH=riscv64 go test -count=1 -exec=qemu-riscv64-static ./... ;;
+            loong64)  GOARCH=loong64 go test -count=1 -exec=qemu-loongarch64-static ./... ;;
+            ppc64le)  GOARCH=ppc64le go test -count=1 -exec=qemu-ppc64le-static ./... ;;
+            s390x)    GOARCH=s390x   go test -count=1 -exec=qemu-s390x-static ./... ;;
+          esac
