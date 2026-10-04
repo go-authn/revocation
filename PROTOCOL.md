@@ -26,16 +26,19 @@ missing, whatever the transport:
   serve an empty one.
 - **Freshness.** Neither `sshd` nor a KRL has a notion of a list's end: a copy
   that stopped updating months ago is read as the current one. TUF calls
-  serving it an *indefinite freeze attack* ("an attacker cannot respond to
+  serving it an *indefinite freeze attack* ("An attacker cannot respond to
   client requests with the same, outdated metadata without the client being
-  aware", TUF specification 1.5.2), and nothing in a copied file prevents it.
+  aware of the problem", TUF specification 1.5.2), and nothing in a copied
+  file prevents it.
   `sshd` does fail closed when the file is unreadable (sshd_config(5),
   `RevokedKeys`), but not when it is old.
 
 A CRL has neither problem: it is signed by its CA, and carries `nextUpdate`
-("the date by which the next CRL will be issued", RFC 5280 5.1.2.5), past
-which a relying party "MUST consider the CRL to be invalid" (RFC 5280 6.3.3).
-OpenSSL does: measured with OpenSSL 3.6.4, `openssl verify -crl_check` on a
+("the date by which the next CRL will be issued", RFC 5280 5.1.2.5). RFC
+5280's validation algorithm does not use a CRL past it: "If the current time
+is after the value of the CRL next update field, then do one of the
+following" -- a delta CRL, or a new complete CRL (6.3.3, step (a)(1)).
+OpenSSL does the same: measured with OpenSSL 3.6.4, `openssl verify -crl_check` on a
 CRL past its `nextUpdate` answers `error 12 ... CRL has expired` and refuses
 the certificate. This protocol brings KRLs to the same place, and treats both
 alike from there.
@@ -49,10 +52,11 @@ Unchanged, DER-encoded (RFC 5280). A distributor accepts one only when:
 - its signature verifies against the CA certificate the distributor was
   configured with, and its issuer is that certificate's subject;
 - it has a `nextUpdate` later than now, and a `thisUpdate` not in the future;
-- it has a CRL Number (RFC 5280 5.2.3, "MUST be monotonically increasing");
-- it is not a delta CRL (no `deltaCRLIndicator`: a delta "MUST always be used
-  in conjunction with the most recent complete base CRL", RFC 5280 5.2.4, and
-  a distributor that hands out lists one at a time cannot promise that), and
+- it has a CRL Number, which "conveys a monotonically increasing sequence
+  number for a given CRL scope and CRL issuer" (RFC 5280 5.2.3);
+- it is not a delta CRL (no `deltaCRLIndicator`: a delta lists only what
+  changed since the complete base CRL it references, RFC 5280 5.2.4, and a
+  distributor that hands out lists one at a time cannot pair them), and
   carries no critical extension other than those it understands.
 
 ### 2.2 An OpenSSH KRL and its signature
@@ -70,7 +74,9 @@ Two files:
   go-authn/krl writes and reads it (`Builder.SetExpires`, `KRL.Expires`).
 - **`<name>.sig`**: an armored SSHSIG signature (PROTOCOL.sshsig) over the
   whole KRL file, by the **SSH CA key** whose certificates the list revokes,
-  with the namespace `krl@go-authn.github.io` and the hash `sha512`. This is
+  with the namespace `krl@go-authn.github.io`. Signers use the hash
+  `sha512`, `ssh-keygen -Y sign`'s default; verifiers accept `sha256` too,
+  the other hash PROTOCOL.sshsig allows. This is
   what PROTOCOL.krl recommends instead of its own signature section, and
   what `ssh-keygen -Y verify` checks:
 

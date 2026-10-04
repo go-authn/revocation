@@ -70,7 +70,9 @@ func FileURL(path string) string {
 // few kilobytes.
 const maxSig = 64 << 10
 
-// maxKRL is the largest KRL sshd loads (go-authn/krl refuses past it too).
+// maxKRL bounds a KRL fetched. sshd's own bound is higher (SSHBUF_SIZE_MAX,
+// 128 MiB); a list of real revocations is far below either, and go-authn/krl
+// refuses past its own limit.
 const maxKRL = 32 << 20
 
 // Fetcher fetches one source, keeping the last list that verified.
@@ -78,9 +80,14 @@ type Fetcher struct {
 	src Source
 	now func() time.Time
 
-	mu   sync.Mutex
-	held *List
-	etag string
+	// fetching serialises fetches. mu guards held and etag only, and is
+	// never held across the network: a mirror answers from Held while an
+	// upstream is slow (found by the adversarial review: a GET waited
+	// out a fetch of up to four requests of a minute each).
+	fetching sync.Mutex
+	mu       sync.Mutex
+	held     *List
+	etag     string
 }
 
 // NewFetcher returns a Fetcher for src that holds held, the copy kept from
@@ -129,13 +136,13 @@ func (f *Fetcher) Held() *List {
 // not follow the one held is refused with an error, and the one held is
 // kept: never the empty answer, which would revoke nothing.
 func (f *Fetcher) Fetch(ctx context.Context) (*List, bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	f.fetching.Lock()
+	defer f.fetching.Unlock()
 	changed, err := f.fetch(ctx)
 	if errors.Is(err, errMismatch) {
 		changed, err = f.fetch(ctx) // re-issued between the list and its signature
 	}
-	return f.held, changed, err
+	return f.Held(), changed, err
 }
 
 var (
@@ -145,9 +152,15 @@ var (
 
 // fetch makes one attempt, and reports whether the held list was replaced.
 func (f *Fetcher) fetch(ctx context.Context) (bool, error) {
-	raw, tag, err := f.get(ctx, f.src.URL, maxSizeOf(f.src.Kind), "If-None-Match", f.etagIfHeld())
+	f.mu.Lock()
+	held, heldTag := f.held, f.etag
+	f.mu.Unlock()
+	if held == nil {
+		heldTag = ""
+	}
+	raw, tag, err := f.get(ctx, f.src.URL, maxSizeOf(f.src.Kind), "If-None-Match", heldTag)
 	if errors.Is(err, errNotModified) {
-		if f.held == nil {
+		if held == nil {
 			return false, fmt.Errorf("revocation: %s answered 304 and no copy is held", f.src.URL)
 		}
 		// Still the same list -- which may have expired since: a 304 is
@@ -178,22 +191,19 @@ func (f *Fetcher) fetch(ctx context.Context) (bool, error) {
 	if err := l.Current(f.now(), f.src.MaxAge); err != nil {
 		return false, fmt.Errorf("%s: %w", f.src.URL, err)
 	}
-	if l.Same(f.held) {
+	if l.Same(held) {
+		f.mu.Lock()
 		f.etag = tag
+		f.mu.Unlock()
 		return false, nil
 	}
-	if err := l.Follows(f.held); err != nil {
+	if err := l.Follows(held); err != nil {
 		return false, fmt.Errorf("%s: %w", f.src.URL, err)
 	}
+	f.mu.Lock()
 	f.held, f.etag = l, tag
+	f.mu.Unlock()
 	return true, nil
-}
-
-func (f *Fetcher) etagIfHeld() string {
-	if f.held == nil {
-		return ""
-	}
-	return f.etag
 }
 
 func maxSizeOf(k Kind) int64 {

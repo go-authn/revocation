@@ -42,7 +42,7 @@ arrives, never whether a forged or stale list is accepted.
 ## revokd
 
 ```hcl
-state_dir = "/var/lib/revokd"     # the verified copies: rollback protection, and what a mirror serves
+state_dir = "/var/lib/revokd"     # the verified copies: rollback protection. Refused if group- or world-writable
 refresh   = "1m"
 
 source "univ-a-ssh" {
@@ -56,7 +56,6 @@ source "univ-b-ssh" {
 source "univ-a-x509" {
   url     = "https://idp.univ-a.fr/x509/crl"
   x509_ca = "/etc/ssl/univ-a-ca.pem"
-  max_age = "2h"                             # optional, on top of nextUpdate
 }
 
 output "sshd" {                              # sshd_config: RevokedKeys /etc/ssh/revoked.krl
@@ -80,16 +79,33 @@ revokd -config /etc/revokd.hcl -once    # one sync, for cron: exit 1 when a list
 
 - **One file for sshd.** `RevokedKeys` takes a single file before OpenSSH 10.3
   (multiple files arrived with openssh-portable 135a622, 2026-02-11; Debian 13
-  ships 10.0, Ubuntu 24.04 9.6), so the KRL sources of an output are merged
-  (`krl.Builder.Merge`). A source whose list is not current contributes its CA
-  key, revoked, and the file's comment says `FAIL CLOSED` and names it
-  (`ssh-keygen -Q -l -f` shows it).
+  ships 10.0, Ubuntu 24.04 9.6), so the KRL sources of an output are merged.
+  **Each list counts for its own CA only** (`krl.Builder.MergeCA`). Anything
+  it says about another CA's certificates, any CA's, or a key is left out and
+  logged, so one CA cannot lock another's users out.
+  - A source whose list is not current contributes its CA key, revoked. The
+    file's comment says `FAIL CLOSED` and names it (`ssh-keygen -Q -l -f`
+    shows it).
+  - If the output cannot be rendered at all, every CA of the output is
+    revoked until it can. Keeping the old file would let a later lapse go
+    unseen.
+  - The merged file **expires** with the first of its current inputs, so a
+    reader that checks expiry sees revokd stop.
+- **max_age** applies to KRL sources. It is **refused** on a source that feeds
+  a CRL output: a TLS server judges a CRL by its `nextUpdate` alone and keeps
+  one it has loaded in memory until then, so revokd cannot shorten it.
+- **The state** is one file per source, holding the list and its signature,
+  written by a single rename and the directory fsynced. A crash cannot leave a
+  pair that fails to verify and thereby take the rollback guard with it. A
+  v0.1 state (two files) is read once and replaced.
 - **No reload for sshd.** sshd reads `RevokedKeys` at each authentication, so
   the atomic rename is enough. An unreadable file refuses every login
   (sshd_config(5)).
 - **The mirror** serves `GET /<source>` (with ETag, `If-None-Match`),
   `GET /<source>.sig` (with `If-Match`, 412 when the list changed in between),
-  and `GET /healthz` (503 while a source has no current list). It serves from
+  and `GET /healthz` (503 while a source has no current list or an output
+  fails). A source name ending in `.sig`, or `healthz`, is refused. A slow
+  upstream never blocks the mirror's answers. It serves from
   memory the pair its fetcher holds, so a list and a signature always match.
   Mirrors chain: a mirror's source can be another mirror.
 
@@ -118,6 +134,22 @@ revokd -config /etc/revokd.hcl -once    # one sync, for cron: exit 1 when a list
   10 000 servers polling every minute make 167 requests a second, which a
   mirror handles with a fraction of a core, TLS aside
   (`go test -run '^$' -bench Mirror ./cmd/revokd`).
+
+## Reviewed
+
+An adversarial review of v0.1.1 found eight defects in this repository, each
+proved by a failing test. They are now regression tests
+(`cmd/revokd/review_test.go`), each checked to fail without its fix:
+- a crash between the two state writes dropped the rollback guard;
+- a render error froze the merged output, so another source's lapse was
+  never applied;
+- `max_age` was promised for CRL outputs and not enforced;
+- the mirror was blocked behind a slow upstream;
+- one CA's list could revoke another's certificates;
+- source names collided with the mirror's paths;
+- the state directory's permissions were not checked;
+- three RFC 5280 "quotations" in PROTOCOL.md were not in the RFC. They came
+  from a summarising fetch tool and are now taken from the RFC's text.
 
 ## What it does not do
 

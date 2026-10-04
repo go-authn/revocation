@@ -345,7 +345,7 @@ source "a" {
 		t.Error("the rolled-back list replaced the copy kept")
 	}
 	// A copy tampered with on disk is not trusted.
-	p := filepath.Join(dir, "state", "a")
+	p := filepath.Join(dir, "state", "a.state")
 	raw, _ := os.ReadFile(p)
 	raw[len(raw)-1] ^= 1
 	os.WriteFile(p, raw, 0o644)
