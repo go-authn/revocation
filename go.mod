@@ -3,7 +3,7 @@ module github.com/go-authn/revocation
 go 1.26.6
 
 require (
-	github.com/go-authn/krl v0.4.0
+	github.com/go-authn/krl v0.5.0
 	github.com/hashicorp/hcl/v2 v2.25.0
 	github.com/hiddeco/sshsig v0.2.0
 	golang.org/x/crypto v0.57.0

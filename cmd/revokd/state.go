@@ -101,21 +101,30 @@ func (a *agent) keep(s *sourceBlock, l *revocation.List) error {
 // checkStateDir refuses a state directory others can write to: whoever can
 // replace or remove its files decides what the next list must follow -- an
 // emptied state lets a replayed older list in. As sshd's StrictModes does
-// for authorized_keys, on systems where the mode bits mean that.
+// for authorized_keys: not a symbolic link (whoever owns the link re-points
+// it), owned by revokd's user or by root, and, on systems where the mode
+// bits mean that, writable by neither its group nor others.
+//
+// ⛔ It used os.Stat and checked the mode alone: a symbolic link, and a
+// directory another user owns, passed (found by a security audit).
 func checkStateDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	fi, err := os.Stat(dir)
+	fi, err := os.Lstat(dir)
 	if err != nil {
 		return err
 	}
 	if !fi.IsDir() {
-		return fmt.Errorf("state_dir %s is not a directory", dir)
+		// MkdirAll succeeded: what is there leads to a directory.
+		return fmt.Errorf("state_dir %s is a symbolic link (%v): whoever owns it decides where the state is; name the directory itself", dir, fi.Mode().Type())
 	}
 	if runtime.GOOS != "windows" && fi.Mode().Perm()&0o022 != 0 {
 		return fmt.Errorf("state_dir %s is writable by its group or by others (mode %v): "+
 			"whoever can write there decides which list comes next", dir, fi.Mode().Perm())
 	}
-	return nil
+	return checkOwner(dir, fi, geteuid())
 }
+
+// geteuid is os.Geteuid; replaced in tests.
+var geteuid = os.Geteuid

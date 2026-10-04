@@ -42,7 +42,8 @@ arrives, never whether a forged or stale list is accepted.
 ## revokd
 
 ```hcl
-state_dir = "/var/lib/revokd"     # the verified copies: rollback protection. Refused if group- or world-writable
+state_dir = "/var/lib/revokd"     # the verified copies: rollback protection. Refused if a symlink,
+                                  # group- or world-writable, or owned by neither revokd's user nor root
 refresh   = "1m"
 
 source "univ-a-ssh" {
@@ -52,6 +53,7 @@ source "univ-a-ssh" {
 source "univ-b-ssh" {
   url    = "http://mirror.cluster.local:8080/univ-b-ssh"   # a mirror: plain http is fine
   ssh_ca = "/etc/ssh/ca/univ-b.pub"
+  # revoke_keys = true                       # this source may revoke any key, of any CA's users
 }
 source "univ-a-x509" {
   url     = "https://idp.univ-a.fr/x509/crl"
@@ -81,18 +83,28 @@ revokd -config /etc/revokd.hcl -once    # one sync, for cron: exit 1 when a list
   (multiple files arrived with openssh-portable 135a622, 2026-02-11; Debian 13
   ships 10.0, Ubuntu 24.04 9.6), so the KRL sources of an output are merged.
   **Each list keeps its full effect on its own CA, and none on another**
-  (`krl.Builder.MergeCA`, krl v0.4.0):
+  (`krl.Builder.MergeCAWith`, krl v0.5.0):
   - **Kept:** its serials and key IDs, its any-CA sections (re-scoped to its
-    CA), and the user keys it revokes. Its own key revoked revokes all its
-    certificates.
+    CA), and its own CA key, which revokes all its certificates.
   - **Left out, and logged:** another CA's section, and another CA's key named
-    by blob or fingerprint. So one CA cannot lock another's users out.
+    by blob or fingerprint. So one CA cannot revoke another CA.
+  - **User keys** (a plain public key, by blob or fingerprint) are left out,
+    and logged, when the output has **more than one source**, unless the
+    source has `revoke_keys = true`. A KRL cannot scope a key to one CA: sshd
+    checks a certificate's own key against the file, whoever signed it, so a
+    key one CA names locks its holder out under every CA of the file. Set
+    `revoke_keys` only on a source trusted with **any key, of any CA's
+    users**. Without it, a CA revokes its certificates by serial or key ID,
+    which reach only its own. An output with one source keeps them.
   - A source whose list is not current contributes its CA key, revoked. The
     file's comment says `FAIL CLOSED` and names it (`ssh-keygen -Q -l -f`
     shows it).
-  - If the output cannot be rendered at all, every CA of the output is
-    revoked until it can. Keeping the old file would let a later lapse go
-    unseen.
+  - **Each list is first merged alone.** A list that cannot be merged (past
+    the serial ranges krl's Builder keeps, 4M) fails closed **for its own CA
+    only**: its CA key is revoked, the other sources keep their lists, and
+    `/healthz` names the source. If the lists merge alone but not together,
+    every CA of the output is revoked until they do. Keeping the old file
+    would let a later lapse go unseen.
   - The merged file **expires** with the first of its current inputs, so a
     reader that checks expiry sees revokd stop.
 - **max_age** applies to KRL sources. It is **refused** on a source that feeds
@@ -108,7 +120,7 @@ revokd -config /etc/revokd.hcl -once    # one sync, for cron: exit 1 when a list
 - **The mirror** serves `GET /<source>` (with ETag, `If-None-Match`),
   `GET /<source>.sig` (with `If-Match`, 412 when the list changed in between),
   and `GET /healthz` (503 while a source has no current list or an output
-  fails). A source name ending in `.sig`, or `healthz`, is refused. A slow
+  fails, naming the source whose list cannot be merged). A source name ending in `.sig`, or `healthz`, is refused. A slow
   upstream never blocks the mirror's answers. It serves from
   memory the pair its fetcher holds, so a list and a signature always match.
   Mirrors chain: a mirror's source can be another mirror.
@@ -151,6 +163,21 @@ before being refused. The signature is now checked first, on the raw bytes:
 29 ms, 36 allocations (`TestACRLFromAnotherCAIsRefusedBeforeItIsParsed`).
 `govulncheck` found six reachable standard-library advisories in Go 1.26.4,
 so the module requires **Go 1.26.6**, which an older Go fetches by itself.
+
+**A security audit of v0.2.1** found three more, each proved by a test that
+failed and is now its regression test (`cmd/revokd/audit_test.go`), checked
+to fail without its fix:
+- one CA's list could lock out another CA's users by revoking their **public
+  keys** (`TestOneCAsListCannotRevokeAnotherCAsUserKeyUnlessTrustedWithKeys`):
+  now `revoke_keys`, above;
+- one CA's oversized list (~4.9M serial ranges, 1.2 MB signed) failed the whole
+  output closed and locked out **every** CA's users
+  (`TestAListThatCannotBeMergedFailsClosedForItsOwnCAOnly`);
+- the state directory was `os.Stat`-ed: a symbolic link, and a directory
+  another user owns, were accepted
+  (`TestStateDirMustNotBeASymlinkNorAnotherUsersDirectory`). It is now
+  `Lstat`-ed, and its owner must be revokd's user or root, as sshd's
+  StrictModes requires.
 
 An adversarial review of v0.1.1 found eight defects in this repository, each
 proved by a failing test. They are now regression tests

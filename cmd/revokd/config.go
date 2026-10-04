@@ -28,6 +28,7 @@ import (
 //	source "univ-a-ssh" {
 //	  url     = "https://idp.univ-a.fr/ssh/krl"
 //	  ssh_ca  = "/etc/ssh/ca/univ-a.pub"
+//	  # revoke_keys = true            # may revoke any key, of any CA's users
 //	}
 //	source "univ-a-x509" {
 //	  url     = "https://idp.univ-a.fr/x509/crl"
@@ -63,6 +64,9 @@ type sourceBlock struct {
 	SSHCA  string `hcl:"ssh_ca,optional"`
 	X509CA string `hcl:"x509_ca,optional"`
 	MaxAge string `hcl:"max_age,optional"`
+	// RevokeKeys trusts the source's list to revoke any public key, of any
+	// CA's users, in an output it shares with other sources.
+	RevokeKeys bool `hcl:"revoke_keys,optional"`
 
 	kind   revocation.Kind
 	sshCA  ssh.PublicKey
@@ -214,6 +218,9 @@ func (s *sourceBlock) load() error {
 		s.kind, s.x509CA = revocation.CRL, c
 	default:
 		return errors.New("ssh_ca or x509_ca: what the list must be signed by")
+	}
+	if s.RevokeKeys && s.kind != revocation.KRL {
+		return errors.New("revoke_keys is for a KRL source (ssh_ca): a CRL revokes its own CA's certificates only")
 	}
 	if s.MaxAge != "" {
 		d, err := time.ParseDuration(s.MaxAge)
