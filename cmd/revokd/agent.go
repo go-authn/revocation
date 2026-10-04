@@ -45,6 +45,10 @@ type agent struct {
 	// dropNoted is, per source, the issue already said to reach past its
 	// CA.
 	dropNoted map[string]*revocation.List
+	// trials is, per output and source, the list last tried alone and
+	// whether it could be merged: a list that cannot fails closed for its
+	// own CA, not for the whole output.
+	trials map[string]trial
 
 	// tags is the ETag of the list each source holds, computed once per
 	// list: hashing it per request made an unchanged poll cost as much as
@@ -61,7 +65,7 @@ func newAgent(cfg *config, log io.Writer, client *http.Client) (*agent, error) {
 	}
 	a := &agent{cfg: cfg, log: log, now: time.Now, exec: runCommand,
 		errs: make([]error, len(cfg.Sources)), written: map[string][]byte{}, due: map[string]bool{}, outErrs: map[string]error{}, dropNoted: map[string]*revocation.List{},
-		tags: map[*revocation.List]string{}}
+		trials: map[string]trial{}, tags: map[*revocation.List]string{}}
 	for i := range cfg.Sources {
 		s := &cfg.Sources[i]
 		held, err := a.loadHeld(s)
@@ -156,31 +160,52 @@ func (a *agent) render(o outputBlock) ([]byte, error) {
 		return l.Raw, nil
 	}
 	// sshd: one KRL for every source, each source's own list while it is
-	// current, and its CA revoked whole while it is not.
-	var current []*revocation.List
-	var lapsed []string
-	for _, n := range o.Sources {
-		l := a.current(a.cfg.byName[n])
-		current = append(current, l)
-		if l == nil {
-			lapsed = append(lapsed, n)
-		}
-	}
-	comment := "revokd " + o.Name
-	if len(lapsed) > 0 {
-		// What a person reading `ssh-keygen -Q -l` of the file must see.
-		comment += ": FAIL CLOSED, every certificate refused from " + strings.Join(lapsed, ", ")
-	}
-	b := krl.NewBuilder(0, comment)
-	var issued time.Time
+	// current and can be merged, and its CA revoked whole while not.
+	//
 	// The CA keys of this output's sources: what one source's list may not
-	// revoke. Everything else it says keeps its effect, its own key and the
-	// user keys it revokes included (krl v0.4.0; v0.3.0's MergeCA dropped
-	// those -- a fail-open found by a security audit).
+	// revoke. Its serials, key IDs and its own key keep their effect
+	// (krl v0.4.0; v0.3.0's MergeCA dropped its key revocations -- a
+	// fail-open found by a security audit). A user's public key it
+	// revokes is kept only when it is the output's one source, or a
+	// source trusted with every CA's users (revoke_keys): sshd checks a
+	// certificate's own key against the file, whoever signed it, so a key
+	// one CA names locks that user out under every CA of the output (found
+	// by a security audit).
 	var others []ssh.PublicKey
 	for _, n := range o.Sources {
 		others = append(others, a.cfg.Sources[a.cfg.byName[n]].sshCA)
 	}
+	opts := func(src *sourceBlock) krl.MergeOptions {
+		return krl.MergeOptions{Others: others, DropKeys: len(o.Sources) > 1 && !src.RevokeKeys}
+	}
+	var current []*revocation.List
+	var closed []string
+	var unmerged []error
+	for _, n := range o.Sources {
+		src := &a.cfg.Sources[a.cfg.byName[n]]
+		l := a.current(a.cfg.byName[n])
+		if l != nil {
+			// ⛔ Each list tried alone first: one CA's list that cannot be
+			// merged (too many serial ranges) failed the whole output, and
+			// the fail-closed list then refused every CA's users (found by
+			// a security audit). It now fails closed for its own CA.
+			if err := a.try(o.Name, n, l, src.sshCA, opts(src)); err != nil {
+				unmerged = append(unmerged, fmt.Errorf("source %s: its list cannot be merged, every certificate of its CA is refused: %w", n, err))
+				l = nil
+			}
+		}
+		current = append(current, l)
+		if l == nil {
+			closed = append(closed, n)
+		}
+	}
+	comment := "revokd " + o.Name
+	if len(closed) > 0 {
+		// What a person reading `ssh-keygen -Q -l` of the file must see.
+		comment += ": FAIL CLOSED, every certificate refused from " + strings.Join(closed, ", ")
+	}
+	b := krl.NewBuilder(0, comment)
+	var issued time.Time
 	var expires time.Time
 	for j, n := range o.Sources {
 		l, src := current[j], &a.cfg.Sources[a.cfg.byName[n]]
@@ -192,8 +217,9 @@ func (a *agent) render(o outputBlock) ([]byte, error) {
 		// list could revoke another CA's key, or every serial of every
 		// CA, and lock that CA's users out (found by the adversarial
 		// review). What is left out is said, once per issue.
-		if dropped := b.MergeCA(l.KRL, src.sshCA, others...); dropped > 0 && a.noteDropped(n, l) {
-			fmt.Fprintf(a.log, "%s: %d revocation(s) in its list reach another CA of this output, and are left out\n", n, dropped)
+		if dropped := b.MergeCAWith(l.KRL, src.sshCA, opts(src)); dropped > 0 && a.noteDropped(n, l) {
+			fmt.Fprintf(a.log, "%s: %d revocation(s) in its list reach past its CA -- another CA's section or key, "+
+				"or a user's public key, which only a source with revoke_keys may revoke in a shared output -- and are left out\n", n, dropped)
 		}
 		if l.Issued.After(issued) {
 			issued = l.Issued
@@ -213,7 +239,32 @@ func (a *agent) render(o outputBlock) ([]byte, error) {
 	if !expires.IsZero() && expires.After(issued.Truncate(time.Second)) {
 		b.SetExpires(expires)
 	}
-	return b.Marshal(issued.Truncate(time.Second))
+	data, err := b.Marshal(issued.Truncate(time.Second))
+	if err != nil {
+		return nil, err
+	}
+	// Written, and failing: /healthz names the source.
+	return data, errors.Join(unmerged...)
+}
+
+// trial is a list tried alone for an output, and what came of it.
+type trial struct {
+	l   *revocation.List
+	err error
+}
+
+// try merges l alone, as render would, and says whether it can be: once per
+// issue of the list, since the list is as long as its CA made it.
+func (a *agent) try(output, source string, l *revocation.List, ca ssh.PublicKey, opt krl.MergeOptions) error {
+	key := output + "\x00" + source
+	if t, ok := a.trials[key]; ok && t.l == l {
+		return t.err
+	}
+	b := krl.NewBuilder(0, "")
+	b.MergeCAWith(l.KRL, ca, opt)
+	_, err := b.Marshal(l.Issued)
+	a.trials[key] = trial{l, err}
+	return err
 }
 
 // noteDropped reports whether this issue of a source's list has not been
@@ -237,6 +288,14 @@ func (a *agent) writeOutput(o outputBlock) (err error) {
 		a.mu.Unlock()
 	}()
 	data, rerr := a.render(o)
+	if rerr != nil && data != nil {
+		// Some sources failed closed, each for its own CA; the others
+		// keep their lists.
+		if werr := a.store(o, data); werr != nil {
+			return errors.Join(rerr, werr)
+		}
+		return rerr
+	}
 	if rerr != nil {
 		// ⛔ Not "leave the file as it was": a list that cannot be
 		// rendered would then freeze it, and a source lapsing after that

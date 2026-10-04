@@ -123,7 +123,15 @@ nginx (`revokd sync`), a mirror (`revokd mirror`).
      certificate of that CA is refused, and nothing else. go-authn/krl's
      `TestOracleRevokingTheCARevokesEveryCertificate` measures it with
      `ssh-keygen -Q`.
-5. **Write atomically.** A file is written beside its target and renamed over
+5. **Merge each list for its own CA.** A distributor that merges several
+   CAs' lists into one file (`sshd` before OpenSSH 10.3 reads one
+   `RevokedKeys`) keeps each list's effect on its own CA's certificates and
+   none on another CA. A revoked plain key cannot be scoped: `sshd` checks a
+   certificate's own key against the file whoever signed it, so a list's key
+   revocations are kept in a shared file only from a source trusted with
+   every CA's users (revokd's `revoke_keys`). A list that cannot be merged
+   fails closed for its own CA (rule 4), not for the others.
+6. **Write atomically.** A file is written beside its target and renamed over
    it. `sshd` reads `RevokedKeys` at each authentication (auth.c
    `auth_key_is_revoked`, krl.c `ssh_krl_file_contains_key`), so the rename is
    all it needs; a server that reads its CRL once at start is told to reload.

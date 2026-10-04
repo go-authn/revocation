@@ -297,8 +297,14 @@ func TestFoundACAsOwnKeyRevocationsReachSSHD(t *testing.T) {
 		u := ia.cert(t, 7) // a certificate of user key k
 		uKey := u.Key
 		bld := krl.NewBuilder(1, "a")
+		// A user key is revoked for every CA of the output, so since the
+		// audit of v0.2.1 only a source with revoke_keys may do it there
+		// (TestOneCAsListCannotRevokeAnotherCAsUserKeyUnlessTrustedWithKeys).
+		// A revoking its own key reaches only A's users: it needs nothing.
+		trust := "revoke_keys = true"
 		if self {
 			bld.RevokeKey(ia.signer.PublicKey()) // A revokes itself
+			trust = ""
 		} else {
 			bld.RevokeKey(uKey) // A revokes user key k outright
 		}
@@ -314,6 +320,7 @@ state_dir = %q
 source "a" {
   url    = %q
   ssh_ca = %q
+  %s
 }
 source "b" {
   url    = %q
@@ -323,7 +330,7 @@ output "sshd" {
   path    = %q
   sources = ["a", "b"]
 }
-`, filepath.Join(dir, "state"), sa.URL+"/krl", ia.caFile(t, dir, "a.pub"), sb.URL+"/krl", ib.caFile(t, dir, "b.pub"), out), sa.Client())
+`, filepath.Join(dir, "state"), sa.URL+"/krl", ia.caFile(t, dir, "a.pub"), trust, sb.URL+"/krl", ib.caFile(t, dir, "b.pub"), out), sa.Client())
 		if err := a.syncOnce(context.Background()); err != nil {
 			t.Fatal(err)
 		}

@@ -17,7 +17,8 @@ import (
 //
 //	GET /<source>        the list; ETag, If-None-Match
 //	GET /<source>.sig    a KRL's signature; If-Match the list's ETag
-//	GET /healthz         200 when every source holds a current list, 503
+//	GET /healthz         200 when every source holds a current list and
+//	                     every output is written whole; 503 naming what is not
 //
 // It serves from memory, the pair a fetcher holds, never from the files a
 // write may be half way through: a list and a signature come from the same
@@ -94,8 +95,10 @@ func (a *agent) health(w http.ResponseWriter, _ *http.Request) {
 	}
 	a.mu.RLock()
 	for _, o := range a.cfg.Outputs {
-		if a.outErrs[o.Name] != nil {
-			broken = append(broken, o.Name)
+		if err := a.outErrs[o.Name]; err != nil {
+			// The error names what fails: a source whose list cannot be
+			// merged, or the output itself.
+			broken = append(broken, o.Name+": "+strings.ReplaceAll(err.Error(), "\n", "; "))
 		}
 	}
 	a.mu.RUnlock()
@@ -105,7 +108,7 @@ func (a *agent) health(w http.ResponseWriter, _ *http.Request) {
 			fmt.Fprintf(w, "no current list: %s\n", strings.Join(lapsed, ", "))
 		}
 		if len(broken) > 0 {
-			fmt.Fprintf(w, "outputs failing: %s\n", strings.Join(broken, ", "))
+			fmt.Fprintf(w, "output %s\n", strings.Join(broken, "\noutput "))
 		}
 		return
 	}
