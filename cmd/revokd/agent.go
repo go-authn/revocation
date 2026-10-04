@@ -20,6 +20,7 @@ import (
 
 	"github.com/go-authn/krl"
 	"github.com/go-authn/revocation"
+	"golang.org/x/crypto/ssh"
 )
 
 // agent fetches every source, keeps the verified copies in the state
@@ -172,6 +173,14 @@ func (a *agent) render(o outputBlock) ([]byte, error) {
 	}
 	b := krl.NewBuilder(0, comment)
 	var issued time.Time
+	// The CA keys of this output's sources: what one source's list may not
+	// revoke. Everything else it says keeps its effect, its own key and the
+	// user keys it revokes included (krl v0.4.0; v0.3.0's MergeCA dropped
+	// those -- a fail-open found by a security audit).
+	var others []ssh.PublicKey
+	for _, n := range o.Sources {
+		others = append(others, a.cfg.Sources[a.cfg.byName[n]].sshCA)
+	}
 	var expires time.Time
 	for j, n := range o.Sources {
 		l, src := current[j], &a.cfg.Sources[a.cfg.byName[n]]
@@ -183,8 +192,8 @@ func (a *agent) render(o outputBlock) ([]byte, error) {
 		// list could revoke another CA's key, or every serial of every
 		// CA, and lock that CA's users out (found by the adversarial
 		// review). What is left out is said, once per issue.
-		if dropped := b.MergeCA(l.KRL, src.sshCA); dropped > 0 && a.noteDropped(n, l) {
-			fmt.Fprintf(a.log, "%s: %d revocation(s) in its list are not for its own CA's certificates, and are left out\n", n, dropped)
+		if dropped := b.MergeCA(l.KRL, src.sshCA, others...); dropped > 0 && a.noteDropped(n, l) {
+			fmt.Fprintf(a.log, "%s: %d revocation(s) in its list reach another CA of this output, and are left out\n", n, dropped)
 		}
 		if l.Issued.After(issued) {
 			issued = l.Issued

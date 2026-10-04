@@ -14,6 +14,8 @@ import (
 
 	"github.com/go-authn/krl"
 	"github.com/hiddeco/sshsig"
+	"golang.org/x/crypto/cryptobyte"
+	cbasn1 "golang.org/x/crypto/cryptobyte/asn1"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -144,6 +146,12 @@ func VerifyCRL(raw []byte, ca *x509.Certificate) (*List, error) {
 		}
 		der = b.Bytes
 	}
+	// ⛔ The signature first, on the raw bytes, then the parse: parsed
+	// first, a 63 MB CRL signed by anybody cost 3 GB allocated and 1.4 GB
+	// live before being refused (found by a security audit).
+	if err := checkCRLSignature(der, ca); err != nil {
+		return nil, fmt.Errorf("revocation: the CRL is not signed by %s: %w", ca.Subject, err)
+	}
 	rl, err := x509.ParseRevocationList(der)
 	if err != nil {
 		return nil, fmt.Errorf("revocation: %w", err)
@@ -224,4 +232,46 @@ func (l *List) Follows(held *List) error {
 // Same reports whether l and o are the same issue of a list.
 func (l *List) Same(o *List) bool {
 	return o != nil && l.Kind == o.Kind && bytes.Equal(l.Raw, o.Raw)
+}
+
+// Signature algorithms a CRL may be signed with, by OID (crypto/x509's own
+// list; RSASSA-PSS names its hash in parameters, so its three forms are
+// tried).
+var crlSignatureAlgorithms = map[string][]x509.SignatureAlgorithm{
+	"1.2.840.113549.1.1.11": {x509.SHA256WithRSA},
+	"1.2.840.113549.1.1.12": {x509.SHA384WithRSA},
+	"1.2.840.113549.1.1.13": {x509.SHA512WithRSA},
+	"1.2.840.113549.1.1.10": {x509.SHA256WithRSAPSS, x509.SHA384WithRSAPSS, x509.SHA512WithRSAPSS},
+	"1.2.840.10045.4.3.2":   {x509.ECDSAWithSHA256},
+	"1.2.840.10045.4.3.3":   {x509.ECDSAWithSHA384},
+	"1.2.840.10045.4.3.4":   {x509.ECDSAWithSHA512},
+	"1.3.101.112":           {x509.PureEd25519},
+}
+
+// checkCRLSignature verifies a DER CRL's signature by ca before anything
+// else of it is read: CertificateList ::= SEQUENCE { tbsCertList,
+// signatureAlgorithm, signatureValue } (RFC 5280 5.1), the signature over
+// the tbsCertList's DER as it stands.
+func checkCRLSignature(der []byte, ca *x509.Certificate) error {
+	in := cryptobyte.String(der)
+	var list, tbs, algo cryptobyte.String
+	var oid asn1.ObjectIdentifier
+	var sig asn1.BitString
+	if !in.ReadASN1(&list, cbasn1.SEQUENCE) || !in.Empty() ||
+		!list.ReadASN1Element(&tbs, cbasn1.SEQUENCE) ||
+		!list.ReadASN1(&algo, cbasn1.SEQUENCE) || !algo.ReadASN1ObjectIdentifier(&oid) ||
+		!list.ReadASN1BitString(&sig) || !list.Empty() || sig.BitLength%8 != 0 {
+		return errors.New("not a CRL")
+	}
+	algs, ok := crlSignatureAlgorithms[oid.String()]
+	if !ok {
+		return fmt.Errorf("signature algorithm %v is not one this reader verifies", oid)
+	}
+	var err error
+	for _, a := range algs {
+		if err = ca.CheckSignature(a, tbs, sig.Bytes); err == nil {
+			return nil
+		}
+	}
+	return err
 }

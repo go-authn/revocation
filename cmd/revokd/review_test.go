@@ -284,3 +284,56 @@ source "a" {
 		}
 	}
 }
+
+// A CA's list revoking a user key it certified, or its own key: through
+// revokd, the file sshd reads revokes what the CA's list revokes. v0.2.0
+// merged with krl v0.3.0's MergeCA, which dropped both -- a fail-open
+// found by a security audit. B's certificates are the control: untouched.
+func TestFoundACAsOwnKeyRevocationsReachSSHD(t *testing.T) {
+	for _, self := range []bool{false, true} {
+		dir := t.TempDir()
+		ia, ib := newSSHIssuer(t), newSSHIssuer(t)
+		now := time.Now()
+		u := ia.cert(t, 7) // a certificate of user key k
+		uKey := u.Key
+		bld := krl.NewBuilder(1, "a")
+		if self {
+			bld.RevokeKey(ia.signer.PublicKey()) // A revokes itself
+		} else {
+			bld.RevokeKey(uKey) // A revokes user key k outright
+		}
+		bld.SetExpires(now.Add(time.Hour))
+		raw, _ := bld.Marshal(now)
+		sig, _ := revocation.SignKRL(raw, ia.signer)
+		ia.raw, ia.sig = raw, sig
+		ib.issue(1, now, time.Hour)
+		sa, sb := httptest.NewTLSServer(ia), httptest.NewTLSServer(ib)
+		out := filepath.Join(dir, "revoked.krl")
+		a := agentFor(t, dir, fmt.Sprintf(`
+state_dir = %q
+source "a" {
+  url    = %q
+  ssh_ca = %q
+}
+source "b" {
+  url    = %q
+  ssh_ca = %q
+}
+output "sshd" {
+  path    = %q
+  sources = ["a", "b"]
+}
+`, filepath.Join(dir, "state"), sa.URL+"/krl", ia.caFile(t, dir, "a.pub"), sb.URL+"/krl", ib.caFile(t, dir, "b.pub"), out), sa.Client())
+		if err := a.syncOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		other := ia.cert(t, 8)
+		got := revokedBy(t, out, u, other, ib.cert(t, 9))
+		want := fmt.Sprint([]bool{true, self, false})
+		if fmt.Sprint(got) != want {
+			t.Errorf("A revoking its own key = %v: revoked %v, want %s (A's cert of the key, another A cert, a B cert)", self, got, want)
+		}
+		sa.Close()
+		sb.Close()
+	}
+}
