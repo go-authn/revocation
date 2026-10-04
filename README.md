@@ -80,9 +80,13 @@ revokd -config /etc/revokd.hcl -once    # one sync, for cron: exit 1 when a list
 - **One file for sshd.** `RevokedKeys` takes a single file before OpenSSH 10.3
   (multiple files arrived with openssh-portable 135a622, 2026-02-11; Debian 13
   ships 10.0, Ubuntu 24.04 9.6), so the KRL sources of an output are merged.
-  **Each list counts for its own CA only** (`krl.Builder.MergeCA`). Anything
-  it says about another CA's certificates, any CA's, or a key is left out and
-  logged, so one CA cannot lock another's users out.
+  **Each list keeps its full effect on its own CA, and none on another**
+  (`krl.Builder.MergeCA`, krl v0.4.0):
+  - **Kept:** its serials and key IDs, its any-CA sections (re-scoped to its
+    CA), and the user keys it revokes. Its own key revoked revokes all its
+    certificates.
+  - **Left out, and logged:** another CA's section, and another CA's key named
+    by blob or fingerprint. So one CA cannot lock another's users out.
   - A source whose list is not current contributes its CA key, revoked. The
     file's comment says `FAIL CLOSED` and names it (`ssh-keygen -Q -l -f`
     shows it).
@@ -136,6 +140,17 @@ revokd -config /etc/revokd.hcl -once    # one sync, for cron: exit 1 when a list
   (`go test -run '^$' -bench Mirror ./cmd/revokd`).
 
 ## Reviewed
+
+**A security audit of v0.2.0** found that `MergeCA` (krl v0.3.0) also dropped
+a CA's revocations of user keys and of its own key. A CA revoking a
+compromised key revoked nothing once merged: a fail-open, fixed in krl v0.4.0
+and here in v0.2.1 (`TestFoundACAsOwnKeyRevocationsReachSSHD`, which fails
+against krl v0.3.0). It also found that a CRL was parsed before its signature
+was checked: a 63 MB CRL signed by anybody cost 2.7 s and 3 GB allocated
+before being refused. The signature is now checked first, on the raw bytes:
+29 ms, 36 allocations (`TestACRLFromAnotherCAIsRefusedBeforeItIsParsed`).
+`govulncheck` found six reachable standard-library advisories in Go 1.26.4,
+so the module requires **Go 1.26.6**, which an older Go fetches by itself.
 
 An adversarial review of v0.1.1 found eight defects in this repository, each
 proved by a failing test. They are now regression tests
