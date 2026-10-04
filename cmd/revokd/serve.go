@@ -86,15 +86,27 @@ func (a *agent) serveList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *agent) health(w http.ResponseWriter, _ *http.Request) {
-	var lapsed []string
+	var lapsed, broken []string
 	for i := range a.cfg.Sources {
 		if a.current(i) == nil {
 			lapsed = append(lapsed, a.cfg.Sources[i].Name)
 		}
 	}
-	if len(lapsed) > 0 {
+	a.mu.RLock()
+	for _, o := range a.cfg.Outputs {
+		if a.outErrs[o.Name] != nil {
+			broken = append(broken, o.Name)
+		}
+	}
+	a.mu.RUnlock()
+	if len(lapsed)+len(broken) > 0 {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprintf(w, "no current list: %s\n", strings.Join(lapsed, ", "))
+		if len(lapsed) > 0 {
+			fmt.Fprintf(w, "no current list: %s\n", strings.Join(lapsed, ", "))
+		}
+		if len(broken) > 0 {
+			fmt.Fprintf(w, "outputs failing: %s\n", strings.Join(broken, ", "))
+		}
 		return
 	}
 	fmt.Fprintln(w, "ok")

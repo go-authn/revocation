@@ -39,6 +39,11 @@ type agent struct {
 	// due is the outputs whose on_change has not succeeded since they
 	// were written: a reload that failed is tried again at the next sync.
 	due map[string]bool
+	// outErrs is each output's last failure, for /healthz.
+	outErrs map[string]error
+	// dropNoted is, per source, the issue already said to reach past its
+	// CA.
+	dropNoted map[string]*revocation.List
 
 	// tags is the ETag of the list each source holds, computed once per
 	// list: hashing it per request made an unchanged poll cost as much as
@@ -50,11 +55,11 @@ type agent struct {
 // newAgent makes the agent; client fetches http and https sources, nil for
 // the default.
 func newAgent(cfg *config, log io.Writer, client *http.Client) (*agent, error) {
-	if err := os.MkdirAll(cfg.StateDir, 0o755); err != nil {
+	if err := checkStateDir(cfg.StateDir); err != nil {
 		return nil, err
 	}
 	a := &agent{cfg: cfg, log: log, now: time.Now, exec: runCommand,
-		errs: make([]error, len(cfg.Sources)), written: map[string][]byte{}, due: map[string]bool{},
+		errs: make([]error, len(cfg.Sources)), written: map[string][]byte{}, due: map[string]bool{}, outErrs: map[string]error{}, dropNoted: map[string]*revocation.List{},
 		tags: map[*revocation.List]string{}}
 	for i := range cfg.Sources {
 		s := &cfg.Sources[i]
@@ -80,29 +85,6 @@ func newAgent(cfg *config, log io.Writer, client *http.Client) (*agent, error) {
 // clock is the agent's time, which its fetchers share: a.now is replaced
 // in tests.
 func (a *agent) clock() time.Time { return a.now() }
-
-// statePath is where a source's verified copy is kept.
-func (a *agent) statePath(s *sourceBlock) string { return filepath.Join(a.cfg.StateDir, s.Name) }
-
-// loadHeld reads back the copy kept from before. Expired or not, it orders
-// what comes next: a restart must not let an older list in.
-func (a *agent) loadHeld(s *sourceBlock) (*revocation.List, error) {
-	raw, err := os.ReadFile(a.statePath(s))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if s.kind == revocation.CRL {
-		return revocation.VerifyCRL(raw, s.x509CA)
-	}
-	sig, err := os.ReadFile(a.statePath(s) + ".sig")
-	if err != nil {
-		return nil, err
-	}
-	return revocation.VerifyKRL(raw, sig, s.sshCA)
-}
 
 // syncOnce fetches every source once and rewrites the outputs that changed.
 // It returns an error naming every source with no current list.
@@ -144,19 +126,6 @@ func (a *agent) syncOnce(ctx context.Context) error {
 	a.mu.RUnlock()
 	if len(failed) > 0 {
 		return fmt.Errorf("not current: %s", strings.Join(failed, ", "))
-	}
-	return nil
-}
-
-// keep writes a verified list to the state directory: the list, then its
-// signature. A reader between the two sees a pair that does not verify and
-// fetches again; the mirror serves from memory, never from the files.
-func (a *agent) keep(s *sourceBlock, l *revocation.List) error {
-	if err := writeAtomic(a.statePath(s), l.Raw, 0o644); err != nil {
-		return err
-	}
-	if s.kind == revocation.KRL {
-		return writeAtomic(a.statePath(s)+".sig", l.Sig, 0o644)
 	}
 	return nil
 }
@@ -203,33 +172,96 @@ func (a *agent) render(o outputBlock) ([]byte, error) {
 	}
 	b := krl.NewBuilder(0, comment)
 	var issued time.Time
+	var expires time.Time
 	for j, n := range o.Sources {
-		l := current[j]
+		l, src := current[j], &a.cfg.Sources[a.cfg.byName[n]]
 		if l == nil {
-			b.RevokeKey(a.cfg.Sources[a.cfg.byName[n]].sshCA)
+			b.RevokeKey(src.sshCA)
 			continue
 		}
-		b.Merge(l.KRL)
+		// ⛔ Each list for its own CA only: with Merge, one CA's signed
+		// list could revoke another CA's key, or every serial of every
+		// CA, and lock that CA's users out (found by the adversarial
+		// review). What is left out is said, once per issue.
+		if dropped := b.MergeCA(l.KRL, src.sshCA); dropped > 0 && a.noteDropped(n, l) {
+			fmt.Fprintf(a.log, "%s: %d revocation(s) in its list are not for its own CA's certificates, and are left out\n", n, dropped)
+		}
 		if l.Issued.After(issued) {
 			issued = l.Issued
+		}
+		if expires.IsZero() || l.Expires.Before(expires) {
+			expires = l.Expires
 		}
 	}
 	// The merged list's date is its newest input's, so that the same
 	// inputs write the same bytes and nothing is rewritten for nothing;
-	// 1970 when every source has lapsed.
+	// 1970 when every source has lapsed. Its expiry is the first of its
+	// inputs': a reader of this file that checks it (fileshare's
+	// ssh_krl_file) sees revokd stop, as it would see the issuer stop.
 	if issued.IsZero() {
 		issued = time.Unix(0, 0)
+	}
+	if !expires.IsZero() && expires.After(issued.Truncate(time.Second)) {
+		b.SetExpires(expires)
 	}
 	return b.Marshal(issued.Truncate(time.Second))
 }
 
+// noteDropped reports whether this issue of a source's list has not been
+// said yet to hold revocations outside its CA.
+func (a *agent) noteDropped(source string, l *revocation.List) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.dropNoted[source] == l {
+		return false
+	}
+	a.dropNoted[source] = l
+	return true
+}
+
 // writeOutput writes an output when its content changed, and runs its
 // on_change command then -- and again at every sync until it succeeds.
-func (a *agent) writeOutput(o outputBlock) error {
-	data, err := a.render(o)
-	if err != nil || data == nil {
-		return err
+func (a *agent) writeOutput(o outputBlock) (err error) {
+	defer func() {
+		a.mu.Lock()
+		a.outErrs[o.Name] = err
+		a.mu.Unlock()
+	}()
+	data, rerr := a.render(o)
+	if rerr != nil {
+		// ⛔ Not "leave the file as it was": a list that cannot be
+		// rendered would then freeze it, and a source lapsing after that
+		// would never be refused (found by the adversarial review: one
+		// CA's oversized list kept another CA's lapse from reaching sshd).
+		// For sshd, every CA of the output is refused until the output
+		// renders again; a CRL is never rendered, only copied.
+		if data, err = a.failClosed(o); err != nil {
+			return fmt.Errorf("%w; and the fail-closed list: %w", rerr, err)
+		}
+		if werr := a.store(o, data); werr != nil {
+			return werr
+		}
+		return fmt.Errorf("%w: every certificate of its CAs is refused until it renders again", rerr)
 	}
+	if data == nil {
+		return nil
+	}
+	return a.store(o, data)
+}
+
+// failClosed is an sshd output that refuses every certificate of every CA
+// it serves.
+func (a *agent) failClosed(o outputBlock) ([]byte, error) {
+	b := krl.NewBuilder(0, "revokd "+o.Name+": FAIL CLOSED, the output could not be rendered")
+	for _, n := range o.Sources {
+		b.RevokeKey(a.cfg.Sources[a.cfg.byName[n]].sshCA)
+	}
+	return b.Marshal(time.Unix(0, 0))
+}
+
+// store writes an output's content when it changed, and runs its on_change
+// command then -- and again at every sync until it succeeds.
+func (a *agent) store(o outputBlock, data []byte) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !bytes.Equal(a.written[o.Name], data) {
@@ -291,7 +323,16 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	// The rename itself, made durable: without it a power loss can bring
+	// back the file the rename replaced.
+	if d, err := os.Open(dir); err == nil {
+		d.Sync() // not supported on every system (Windows): best effort
+		d.Close()
+	}
+	return nil
 }
 
 func runCommand(argv []string) error {

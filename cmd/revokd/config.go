@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/go-authn/revocation"
@@ -115,6 +116,12 @@ func (c *config) check() error {
 		if !nameRE.MatchString(s.Name) {
 			return fmt.Errorf("source %q: a name of letters, digits, '.', '_' and '-', not starting with a dot", s.Name)
 		}
+		// The mirror serves /<name>, /<name>.sig and /healthz: a source
+		// called "x.sig" or "healthz" would be another one's signature,
+		// or the health check (found by the adversarial review).
+		if strings.HasSuffix(s.Name, ".sig") || s.Name == "healthz" {
+			return fmt.Errorf("source %q: a name that ends in .sig, or healthz, is a path the mirror already serves", s.Name)
+		}
 		if _, dup := c.byName[s.Name]; dup {
 			return fmt.Errorf("source %q appears twice", s.Name)
 		}
@@ -148,6 +155,16 @@ func (c *config) check() error {
 			kind = c.Sources[i].kind
 		}
 		switch {
+		case kind == revocation.CRL && c.Sources[c.byName[o.Sources[0]]].maxAge != 0:
+			// ⛔ revokd cannot shorten a CRL's life: the TLS server judges
+			// it by its nextUpdate, and one that loaded it keeps it in
+			// memory until then whatever revokd writes (found by the
+			// adversarial review: max_age was logged, and OpenSSL kept
+			// accepting the CRL). A max_age here would promise what
+			// nothing enforces.
+			return fmt.Errorf("output %q: source %q has a max_age, which a CRL output cannot enforce: "+
+				"the TLS server judges a CRL by its nextUpdate alone. Remove max_age, or ask the CA for a closer nextUpdate",
+				o.Name, o.Sources[0])
 		case kind == revocation.CRL && len(o.Sources) > 1:
 			// Several CAs' CRLs are several files: a TLS server reads them
 			// one per issuer.
