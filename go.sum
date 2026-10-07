@@ -6,8 +6,8 @@ github.com/apparentlymart/go-textseg/v17 v17.0.1 h1:bpMXRgQ5cEoRNuQke1a80/Nl6w3G
 github.com/apparentlymart/go-textseg/v17 v17.0.1/go.mod h1:fa8X4jgGeevslICIY6LcdjkSecWnXmYd9Lk34z/VxZs=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/go-authn/krl v0.5.0 h1:cFZRAaevXY8z5Z2+WO/pg0li/0yq3DFJPy3+zfvc6dk=
-github.com/go-authn/krl v0.5.0/go.mod h1:PW5Vt8KOJRNEboQuoSoYgXC6MS5jH/YgGXX19RhmT5c=
+github.com/go-authn/krl v0.6.0 h1:FgDNWur+4OuL97W5OIKoEb8y2Lu0owlCuUl0Y1ReWPo=
+github.com/go-authn/krl v0.6.0/go.mod h1:ovqI+9oaZxw/KTiZSyi2Lqdhmscbocc29oV2DoIh3l8=
 github.com/go-test/deep v1.0.3 h1:ZrJSEWsXzPOxaZnFteGEfooLba+ju3FYIbOrS+rQd68=
 github.com/go-test/deep v1.0.3/go.mod h1:wGDj63lr65AM2AQyKZd/NYHGb0R+1RLqB8NKt3aSFNA=
 github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
