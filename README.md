@@ -200,6 +200,20 @@ plus the issuer's delay in re-issuing. When the issuer is down, it is refused
 from the list's expiry onward. Whoever holds a CA's key can sign any list, as
 they can sign any certificate.
 
+## Release binaries
+
+Each release carries `revokd` for linux, darwin and windows on amd64 and arm64
+(pure Go, `CGO_ENABLED=0`), a `SHA256SUMS` manifest, and a build provenance
+attestation per binary, made by this repository's release workflow at the
+tag. Check a download before running it:
+
+```sh
+sha256sum -c SHA256SUMS --ignore-missing
+gh attestation verify revokd-linux-amd64 --repo go-authn/revocation
+```
+
+`revokd -version` prints the tag it was built from.
+
 ## License
 
 BSD 3-Clause.
