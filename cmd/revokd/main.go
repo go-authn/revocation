@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 )
@@ -35,8 +36,13 @@ func run(args []string, log io.Writer) int {
 	fs.SetOutput(log)
 	path := fs.String("config", "/etc/revokd.hcl", "the configuration file")
 	once := fs.Bool("once", false, "sync once and exit: 1 when a list is not current")
+	showVersion := fs.Bool("version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if *showVersion {
+		fmt.Fprintf(log, "revokd %s\n", version())
+		return 0
 	}
 	cfg, err := loadConfig(*path)
 	if err != nil {
@@ -91,4 +97,14 @@ func serve(ctx context.Context, a *agent, listen string, log io.Writer) error {
 		}
 		return err
 	}
+}
+
+// version is the module version Go stamped into the binary from the tag it
+// was built at (debug.ReadBuildInfo), so that a revokd found on a server can
+// be matched to its release and to any advisory against it.
+func version() string {
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return "(devel)"
 }
