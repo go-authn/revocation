@@ -89,6 +89,9 @@ func run(args []string, log io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	hup, stopHUP := notifyHUP()
+	defer stopHUP()
+	a.wake = hup
 	if *once {
 		if err := a.syncOnce(ctx); err != nil {
 			fmt.Fprintf(log, "%s: %v\n", cmdName, err)
@@ -140,4 +143,18 @@ func version() string {
 		return bi.Main.Version
 	}
 	return "(devel)"
+}
+
+// notifyHUP catches SIGHUP, which then asks the running agent to sync now
+// (systemctl reload). The configuration is not re-read: restart for that.
+//
+// ⛔ Uncaught, SIGHUP killed the process (Go's default), and systemd counts
+// a death by SIGHUP as a clean exit: a Restart=on-failure unit stayed down,
+// and sshd kept reading the last KRL written, which nothing would fail
+// closed any more (found in go-authn/authnd, measured there in a VM). With
+// -once it is caught too, and changes nothing.
+func notifyHUP() (<-chan os.Signal, func()) {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGHUP)
+	return c, func() { signal.Stop(c) }
 }

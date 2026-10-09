@@ -31,6 +31,9 @@ type agent struct {
 	now func() time.Time
 	// exec runs an output's on_change command; replaced in tests.
 	exec func(argv []string) error
+	// wake, when it delivers, syncs now instead of at the next refresh:
+	// SIGHUP (notifyHUP). nil never delivers.
+	wake <-chan os.Signal
 
 	fetchers []*revocation.Fetcher
 
@@ -361,6 +364,8 @@ func (a *agent) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-time.After(a.cfg.refresh + jitter):
+		case s := <-a.wake:
+			fmt.Fprintf(a.log, "%v: syncing now\n", s)
 		}
 	}
 }
