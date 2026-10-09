@@ -12,6 +12,6 @@
 // issuer; FailClosedKRL is what a distributor writes for sshd when it has
 // no current list.
 //
-// PROTOCOL.md says what is verified and why; the revokd command distributes
+// PROTOCOL.md says what is verified and why; the authn-revokd command distributes
 // lists with this package.
 package revocation
