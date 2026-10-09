@@ -20,7 +20,7 @@ import (
 // serials a CA has issued: the unchanged poll (304) every agent makes
 // every refresh, and the full download it makes when the list changes.
 //
-//	go test -run '^$' -bench Mirror -benchmem ./cmd/revokd
+//	go test -run '^$' -bench Mirror -benchmem ./cmd/authn-revokd
 func BenchmarkMirror(b *testing.B) {
 	for _, n := range []int{100, 10_000, 100_000} {
 		is := newSSHIssuer(&testing.T{})

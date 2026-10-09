@@ -20,9 +20,9 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// config is revokd's configuration:
+// config is authn-revokd's configuration (/etc/authn-revokd/revokd.hcl):
 //
-//	state_dir = "/var/lib/revokd"     # the verified copies; what a mirror serves
+//	state_dir = "/var/lib/authn-revokd/state"   # the verified copies; what a mirror serves
 //	refresh   = "1m"
 //
 //	source "univ-a-ssh" {
