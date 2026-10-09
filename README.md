@@ -5,7 +5,7 @@ writes them to every server that must refuse what they list, **without trusting
 anything in between and without ever mistaking a stale list for a current one**.
 
 - **[PROTOCOL.md](PROTOCOL.md)**: what is verified, and why.
-- **`revokd`**: an agent that fetches the lists, keeps only those that verify,
+- **`authn-revokd`** (called `revokd` before v0.6.0): an agent that fetches the lists, keeps only those that verify,
   and writes them where `sshd` and TLS servers read them. When a list lapses, it
   fails closed for `sshd`. With `listen`, it serves the verified lists to other
   agents as a **mirror**.
@@ -33,17 +33,23 @@ OpenSSL refuses it (measured below). This brings KRLs to the same place:
 | authentic | detached **SSHSIG** by the SSH CA key, namespace `krl@go-authn.github.io`, checked with `ssh-keygen -Y verify` too | signed by its CA |
 | current | **`expires@go-authn.github.io`**, a non-critical extension, which sshd ignores ([go-authn/krl](https://github.com/go-authn/krl) v0.2.0) | `nextUpdate` |
 | never backwards | `krl_version`, then generation date | CRL Number, then `thisUpdate` |
-| fail closed | revokd writes a KRL that **revokes the CA key**: every certificate of that CA is refused | OpenSSL refuses an expired CRL by itself |
+| fail closed | authn-revokd writes a KRL that **revokes the CA key**: every certificate of that CA is refused | OpenSSL refuses an expired CRL by itself |
 
 Since every list verifies by itself, the transport can be HTTPS, HTTP inside a
 cluster, a CDN, a mirror, or a file. The transport decides how fast a change
 arrives, never whether a forged or stale list is accepted.
 
-## revokd
+## authn-revokd
+
+**[docs/install.md](docs/install.md)** installs it as a hardened systemd service
+(units in [`packaging/`](packaging)), wires sshd and a TLS server, and says how
+to upgrade, roll back and uninstall. **Upgrading from `revokd`:** see
+[Upgrading to v0.6.0](docs/install.md#upgrading-to-v060).
 
 ```hcl
-state_dir = "/var/lib/revokd"     # the verified copies: rollback protection. Refused if a symlink,
-                                  # group- or world-writable, or owned by neither revokd's user nor root
+# /etc/authn-revokd/revokd.hcl
+state_dir = "/var/lib/authn-revokd/state"   # the verified copies: rollback protection. Refused if a symlink,
+                                            # group- or world-writable, or owned by neither its user nor root
 refresh   = "1m"
 
 source "univ-a-ssh" {
@@ -60,23 +66,25 @@ source "univ-a-x509" {
   x509_ca = "/etc/ssl/univ-a-ca.pem"
 }
 
-output "sshd" {                              # sshd_config: RevokedKeys /etc/ssh/revoked.krl
-  path    = "/etc/ssh/revoked.krl"
+output "sshd" {                              # sshd_config: RevokedKeys /var/lib/authn-revokd/sshd.krl
+  path    = "/var/lib/authn-revokd/sshd.krl"
   sources = ["univ-a-ssh", "univ-b-ssh"]     # merged into one file
 }
-output "nginx" {
-  path      = "/etc/nginx/univ-a.crl"
+output "nginx" {                             # nginx: ssl_crl /var/lib/authn-revokd/univ-a.crl
+  path      = "/var/lib/authn-revokd/univ-a.crl"
   sources   = ["univ-a-x509"]
   format    = "pem"
-  on_change = ["systemctl", "reload", "nginx"]   # retried at each sync until it succeeds
+  # on_change = ["/usr/local/bin/notify-something"]   # retried at each sync until it succeeds;
+  #   under the systemd unit it runs unprivileged: reload nginx with a path unit (docs/install.md)
 }
 
 listen = ":8080"                             # optional: serve the verified lists (a mirror)
 ```
 
 ```sh
-revokd -config /etc/revokd.hcl          # run
-revokd -config /etc/revokd.hcl -once    # one sync, for cron: exit 1 when a list is not current
+authn-revokd                    # run (-config /etc/authn-revokd/revokd.hcl by default); SIGHUP: sync now
+authn-revokd -once              # one sync, for a timer: exit 1 when a list is not current
+authn-revokd -version
 ```
 
 - **One file for sshd.** `RevokedKeys` takes a single file before OpenSSH 10.3
@@ -106,10 +114,10 @@ revokd -config /etc/revokd.hcl -once    # one sync, for cron: exit 1 when a list
     every CA of the output is revoked until they do. Keeping the old file
     would let a later lapse go unseen.
   - The merged file **expires** with the first of its current inputs, so a
-    reader that checks expiry sees revokd stop.
+    reader that checks expiry sees authn-revokd stop.
 - **max_age** applies to KRL sources. It is **refused** on a source that feeds
   a CRL output: a TLS server judges a CRL by its `nextUpdate` alone and keeps
-  one it has loaded in memory until then, so revokd cannot shorten it.
+  one it has loaded in memory until then, so authn-revokd cannot shorten it.
 - **The state** is one file per source, holding the list and its signature,
   written by a single rename and the directory fsynced. A crash cannot leave a
   pair that fails to verify and thereby take the rollback guard with it. A
@@ -127,13 +135,13 @@ revokd -config /etc/revokd.hcl -once    # one sync, for cron: exit 1 when a list
 
 ## Measured
 
-- **A real sshd judges what revokd writes** (`TestSSHDJudgesWhatRevokdWrites`:
+- **A real sshd judges what authn-revokd writes** (`TestSSHDJudgesWhatRevokdWrites`:
   OpenSSH 10.3p1 on macOS, and 9.6p1 on the Ubuntu CI runner, a single-file
   `RevokedKeys` sshd). A certificate logs in with
   nothing revoked; once its serial is revoked it is refused; with a list
   revoking nothing that then lapses, it is refused (the fail-closed list); with
   a fresh list it logs in again. sshd is never restarted. Removing the
-  fail-closed list from revokd turns this red.
+  fail-closed list from authn-revokd turns this red.
 - **OpenSSL fails closed on its own:** `openssl verify -crl_check` with a CRL
   past its `nextUpdate` answers `error 12 ... CRL has expired` (OpenSSL 3.6.4).
 - **ssh-keygen judges the signatures both ways:** `ssh-keygen -Y verify`
@@ -149,7 +157,7 @@ revokd -config /etc/revokd.hcl -once    # one sync, for cron: exit 1 when a list
   revocations is 256 KiB and costs 22 µs to serve and 2.6 ms to verify. So
   10 000 servers polling every minute make 167 requests a second, which a
   mirror handles with a fraction of a core, TLS aside
-  (`go test -run '^$' -bench Mirror ./cmd/revokd`).
+  (`go test -run '^$' -bench Mirror ./cmd/authn-revokd`).
 
 ## Reviewed
 
@@ -165,7 +173,7 @@ before being refused. The signature is now checked first, on the raw bytes:
 so the module requires **Go 1.26.6**, which an older Go fetches by itself.
 
 **A security audit of v0.2.1** found three more, each proved by a test that
-failed and is now its regression test (`cmd/revokd/audit_test.go`), checked
+failed and is now its regression test (`cmd/authn-revokd/audit_test.go`), checked
 to fail without its fix:
 - one CA's list could lock out another CA's users by revoking their **public
   keys** (`TestOneCAsListCannotRevokeAnotherCAsUserKeyUnlessTrustedWithKeys`):
@@ -176,12 +184,12 @@ to fail without its fix:
 - the state directory was `os.Stat`-ed: a symbolic link, and a directory
   another user owns, were accepted
   (`TestStateDirMustNotBeASymlinkNorAnotherUsersDirectory`). It is now
-  `Lstat`-ed, and its owner must be revokd's user or root, as sshd's
+  `Lstat`-ed, and its owner must be authn-revokd's user or root, as sshd's
   StrictModes requires.
 
 An adversarial review of v0.1.1 found eight defects in this repository, each
 proved by a failing test. They are now regression tests
-(`cmd/revokd/review_test.go`), each checked to fail without its fix:
+(`cmd/authn-revokd/review_test.go`), each checked to fail without its fix:
 - a crash between the two state writes dropped the rollback guard;
 - a render error froze the merged output, so another source's lapse was
   never applied;
@@ -202,17 +210,18 @@ they can sign any certificate.
 
 ## Release binaries
 
-Each release carries `revokd` for linux, darwin and windows on amd64 and arm64
+Each release carries `authn-revokd` for linux, darwin and windows on amd64 and arm64
 (pure Go, `CGO_ENABLED=0`), a `SHA256SUMS` manifest, and a build provenance
 attestation per binary, made by this repository's release workflow at the
 tag. Check a download before running it:
 
 ```sh
 sha256sum -c SHA256SUMS --ignore-missing
-gh attestation verify revokd-linux-amd64 --repo go-authn/revocation
+gh attestation verify authn-revokd-linux-amd64 --repo go-authn/revocation
 ```
 
-`revokd -version` prints the tag it was built from.
+`authn-revokd -version` prints the tag it was built from. Before v0.6.0 the
+assets were `revokd-<os>-<arch>`.
 
 ## License
 

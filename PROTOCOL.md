@@ -100,7 +100,7 @@ it; and it has an expiry later than now.
 
 A *distributor* is anything that fetches lists and passes them on: a server
 using them itself (go-fileshare), an agent writing them to disk for `sshd` or
-nginx (`revokd sync`), a mirror (`revokd mirror`).
+nginx (`authn-revokd`), a mirror (`authn-revokd` with `listen`).
 
 1. **Verify before use, and before passing on.** A list that does not verify
    is never written, served or used. The last good copy stays.
@@ -129,7 +129,7 @@ nginx (`revokd sync`), a mirror (`revokd mirror`).
    none on another CA. A revoked plain key cannot be scoped: `sshd` checks a
    certificate's own key against the file whoever signed it, so a list's key
    revocations are kept in a shared file only from a source trusted with
-   every CA's users (revokd's `revoke_keys`). A list that cannot be merged
+   every CA's users (authn-revokd's `revoke_keys`). A list that cannot be merged
    fails closed for its own CA (rule 4), not for the others.
 6. **Write atomically.** A file is written beside its target and renamed over
    it. `sshd` reads `RevokedKeys` at each authentication (auth.c

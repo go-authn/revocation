@@ -31,6 +31,9 @@ type agent struct {
 	now func() time.Time
 	// exec runs an output's on_change command; replaced in tests.
 	exec func(argv []string) error
+	// wake, when it delivers, syncs now instead of at the next refresh:
+	// SIGHUP (notifyHUP). nil never delivers.
+	wake <-chan os.Signal
 
 	fetchers []*revocation.Fetcher
 
@@ -199,7 +202,7 @@ func (a *agent) render(o outputBlock) ([]byte, error) {
 			closed = append(closed, n)
 		}
 	}
-	comment := "revokd " + o.Name
+	comment := cmdName + " " + o.Name
 	if len(closed) > 0 {
 		// What a person reading `ssh-keygen -Q -l` of the file must see.
 		comment += ": FAIL CLOSED, every certificate refused from " + strings.Join(closed, ", ")
@@ -232,7 +235,7 @@ func (a *agent) render(o outputBlock) ([]byte, error) {
 	// inputs write the same bytes and nothing is rewritten for nothing;
 	// 1970 when every source has lapsed. Its expiry is the first of its
 	// inputs': a reader of this file that checks it (fileshare's
-	// ssh_krl_file) sees revokd stop, as it would see the issuer stop.
+	// ssh_krl_file) sees authn-revokd stop, as it would see the issuer stop.
 	if issued.IsZero() {
 		issued = time.Unix(0, 0)
 	}
@@ -320,7 +323,7 @@ func (a *agent) writeOutput(o outputBlock) (err error) {
 // failClosed is an sshd output that refuses every certificate of every CA
 // it serves.
 func (a *agent) failClosed(o outputBlock) ([]byte, error) {
-	b := krl.NewBuilder(0, "revokd "+o.Name+": FAIL CLOSED, the output could not be rendered")
+	b := krl.NewBuilder(0, cmdName+" "+o.Name+": FAIL CLOSED, the output could not be rendered")
 	for _, n := range o.Sources {
 		b.RevokeKey(a.cfg.Sources[a.cfg.byName[n]].sshCA)
 	}
@@ -361,6 +364,8 @@ func (a *agent) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-time.After(a.cfg.refresh + jitter):
+		case s := <-a.wake:
+			fmt.Fprintf(a.log, "%v: syncing now\n", s)
 		}
 	}
 }
