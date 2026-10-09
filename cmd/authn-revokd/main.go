@@ -59,10 +59,10 @@ func migrationHint(explicit bool, path, old string) string {
 }
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(args []string, log io.Writer) int {
+func run(args []string, out, log io.Writer) int {
 	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
 	fs.SetOutput(log)
 	path := fs.String("config", defaultConfig, "the configuration file")
@@ -72,7 +72,7 @@ func run(args []string, log io.Writer) int {
 		return 2
 	}
 	if *showVersion {
-		fmt.Fprintf(log, "%s %s\n", cmdName, version())
+		fmt.Fprintf(out, "%s %s\n", cmdName, version())
 		return 0
 	}
 	cfg, err := loadConfig(*path)

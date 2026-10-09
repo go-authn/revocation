@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,11 +13,15 @@ import (
 // -version answers without reading a configuration: an authn-revokd found
 // on a server must say what it is before anything else about it is known.
 // It says authn-revokd: the name it is installed and released under, which
-// the release workflow checks the tag against.
+// the release workflow checks the tag against. It says it on standard output,
+// as authnd and authn-bridge do, so v=$(authn-revokd -version) captures it.
 func TestVersionNeedsNoConfiguration(t *testing.T) {
-	var out bytes.Buffer
-	if code := run([]string{"-config", "/nonexistent/revokd.hcl", "-version"}, &out); code != 0 {
-		t.Fatalf("exit %d: %s", code, out.String())
+	var out, log bytes.Buffer
+	if code := run([]string{"-config", "/nonexistent/revokd.hcl", "-version"}, &out, &log); code != 0 {
+		t.Fatalf("exit %d: %s", code, log.String())
+	}
+	if log.Len() != 0 {
+		t.Errorf("the log got %q", log.String())
 	}
 	if !strings.HasPrefix(out.String(), "authn-revokd ") || strings.TrimSpace(out.String()) == "authn-revokd" {
 		t.Errorf("printed %q", out.String())
@@ -28,7 +33,7 @@ func TestVersionNeedsNoConfiguration(t *testing.T) {
 func TestErrorsNameTheCommand(t *testing.T) {
 	var out bytes.Buffer
 	missing := filepath.Join(t.TempDir(), "absent.hcl")
-	if code := run([]string{"-config", missing}, &out); code != 2 {
+	if code := run([]string{"-config", missing}, io.Discard, &out); code != 2 {
 		t.Fatalf("exit %d: %s", code, out.String())
 	}
 	if !strings.HasPrefix(out.String(), "authn-revokd: "+missing+": ") {

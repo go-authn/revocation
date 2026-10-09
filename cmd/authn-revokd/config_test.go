@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -114,7 +115,7 @@ output "sshd" {
 }
 `, filepath.Join(dir, "state"), revocation.FileURL(src), is.caFile(t, dir, "ca.pub"), out)))
 	var log bytes.Buffer
-	if c := run([]string{"-config", cfg, "-once"}, &log); c != 0 {
+	if c := run([]string{"-config", cfg, "-once"}, io.Discard, &log); c != 0 {
 		t.Fatalf("exit %d: %s", c, log.String())
 	}
 	if _, err := os.Stat(out); err != nil {
@@ -122,20 +123,20 @@ output "sshd" {
 	}
 	os.Remove(src)
 	os.RemoveAll(filepath.Join(dir, "state"))
-	if c := run([]string{"-config", cfg, "-once"}, &log); c != 1 {
+	if c := run([]string{"-config", cfg, "-once"}, io.Discard, &log); c != 1 {
 		t.Errorf("no list: exit %d, want 1", c)
 	}
-	if c := run([]string{"-config", filepath.Join(dir, "absent.hcl")}, &log); c != 2 {
+	if c := run([]string{"-config", filepath.Join(dir, "absent.hcl")}, io.Discard, &log); c != 2 {
 		t.Errorf("a missing config: exit %d", c)
 	}
-	if c := run([]string{"-bogus"}, &log); c != 2 {
+	if c := run([]string{"-bogus"}, io.Discard, &log); c != 2 {
 		t.Errorf("a bad flag: exit %d", c)
 	}
 	// A state directory that cannot be made.
 	blocked := write(t, dir, "blocked", nil)
 	bad := write(t, dir, "bad.hcl", []byte(fmt.Sprintf("state_dir = %q\nsource \"a\" {\n  url = %q\n  ssh_ca = %q\n}\n",
 		filepath.Join(blocked, "s"), revocation.FileURL(filepath.Join(dir, "x")), filepath.Join(dir, "ca.pub"))))
-	if c := run([]string{"-config", bad}, &log); c != 1 {
+	if c := run([]string{"-config", bad}, io.Discard, &log); c != 1 {
 		t.Errorf("an unusable state_dir: exit %d", c)
 	}
 }
