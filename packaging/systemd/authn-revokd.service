@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# authn-revokd: fetches signed SSH KRLs and X.509 CRLs, keeps those that
+# verify, and writes them where sshd and TLS servers read them, failing
+# closed for sshd when a list lapses. With listen, it is also a mirror.
+#
+# Installed as /etc/systemd/system/authn-revokd.service, with the account
+# from packaging/sysusers.d/authn-revokd.conf. See docs/install.md.
+#
+# This is the daemon, and the way to run it: it syncs every `refresh` and
+# rewrites an output the moment a list lapses. authn-revokd-once.timer is the
+# alternative for a host that wants no long-running process; never enable
+# both.
+#
+# What the code needs, and therefore all this unit grants:
+#
+#   - Its configuration, /etc/authn-revokd/revokd.hcl, and the CA keys it
+#     names: read at start. /etc stays read-only.
+#   - Outbound HTTP(S) to its sources, and DNS.
+#   - /var/lib/authn-revokd, the one writable place:
+#       state/          state_dir: the verified copies, 0700, created by
+#                       authn-revokd itself and refused if it is a symlink,
+#                       group- or world-writable, or owned by anyone else;
+#       *.krl, *.crl    the outputs, 0644, written beside their final name
+#                       and renamed over it. So it is the DIRECTORY of an
+#                       output that must be writable, not only the file.
+#     The directory is 0755, so that sshd (root) and a TLS server running
+#     as its own user can read the outputs, and nothing else can write.
+#   - A mirror port (listen) above 1024: no capability. Below 1024, see the
+#     drop-in in docs/install.md.
+#   - Nothing else. In particular it cannot run `systemctl reload`: an
+#     on_change command runs as this account, and systemd answers
+#     "Interactive authentication required". Reload a TLS server with a path
+#     unit instead (docs/install.md).
+#
+# ⛔ Do NOT point an output into /etc/ssh, /etc/nginx or any directory that
+# holds other configuration: the unit would need it in ReadWritePaths=, and
+# this account could then replace sshd_config. Point the server at
+# /var/lib/authn-revokd instead. If an output must live elsewhere, give it a
+# directory of its own, owned by authn-revokd, and add exactly that directory
+# with a drop-in (docs/install.md).
+#
+# Reload (SIGHUP) syncs every source NOW instead of at the next refresh. It
+# does NOT re-read the configuration, which is read once, at start: change
+# it and run `systemctl restart authn-revokd`. (Before v0.6.0 an uncaught
+# SIGHUP killed the process, and systemd counts that as a clean exit.)
+#
+# ⛔ sshd ignores a KRL's expiry. The file is failed closed by THIS process
+# when a list lapses: while it is stopped, sshd keeps reading the last file
+# it wrote. Hence Restart=always, and monitor the unit (or /healthz).
+
+[Unit]
+Description=go-authn revocation list agent (SSH KRLs, X.509 CRLs)
+Documentation=https://github.com/go-authn/revocation
+Wants=network-online.target
+After=network-online.target
+Conflicts=authn-revokd-once.timer authn-revokd-once.service
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/authn-revokd -config /etc/authn-revokd/revokd.hcl
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5s
+
+User=authn-revokd
+Group=authn-revokd
+UMask=0077
+
+# No capability at all.
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+
+StateDirectory=authn-revokd
+StateDirectoryMode=0755
+
+# The file system: read-only everywhere except the state directory.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProcSubset=pid
+
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+PrivateIPC=yes
+# Other users appear as nobody. The state directory is checked to belong to
+# this account, which is mapped, so that check still holds.
+PrivateUsers=yes
+RemoveIPC=yes
+
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

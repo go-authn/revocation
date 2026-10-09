@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# authn-revokd -once: one sync, then exit. Started by authn-revokd-once.timer,
+# for a host that wants no long-running process. Exits 1 (and the unit is
+# "failed") when a list is not current: the outputs are written all the same,
+# failed closed for sshd, and the next tick tries again.
+#
+# The daemon (authn-revokd.service) is the default and the better choice: it
+# fails a lapsed list closed the moment it lapses, where this does so at the
+# next tick, and only it can serve as a mirror (listen is ignored here).
+# Never enable both. Everything said in authn-revokd.service about the paths,
+# the account and the hardening holds here.
+
+[Unit]
+Description=go-authn revocation list agent, one sync
+Documentation=https://github.com/go-authn/revocation
+Wants=network-online.target
+After=network-online.target
+Conflicts=authn-revokd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/authn-revokd -config /etc/authn-revokd/revokd.hcl -once
+# A sync that hangs on a source must not outlive the next tick.
+TimeoutStartSec=5min
+
+
+User=authn-revokd
+Group=authn-revokd
+UMask=0077
+
+# No capability at all.
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+
+StateDirectory=authn-revokd
+StateDirectoryMode=0755
+
+# The file system: read-only everywhere except the state directory.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProcSubset=pid
+
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+PrivateIPC=yes
+# Other users appear as nobody. The state directory is checked to belong to
+# this account, which is mapped, so that check still holds.
+PrivateUsers=yes
+RemoveIPC=yes
+
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM

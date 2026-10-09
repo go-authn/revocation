@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Runs authn-revokd-once.service every minute: the alternative to the daemon
+# (authn-revokd.service) for a host that wants no long-running process.
+#
+# The interval is the delay between a list lapsing and sshd refusing its CA,
+# and between a revocation being issued and reaching sshd: keep it at or
+# below the `refresh` the daemon would use, and well below the lists'
+# lifetime. Change it with `systemctl edit authn-revokd-once.timer`.
+#
+# ⛔ A timer that stops firing is a daemon that stopped: sshd keeps reading
+# the last file written. Monitor `systemctl status authn-revokd-once`.
+
+[Unit]
+Description=go-authn revocation list agent, one sync every minute
+Documentation=https://github.com/go-authn/revocation
+Conflicts=authn-revokd.service
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
+AccuracySec=5s
+# A fleet started together does not poll its issuer in step.
+RandomizedDelaySec=10s
+
+[Install]
+WantedBy=timers.target
