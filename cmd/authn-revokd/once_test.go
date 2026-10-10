@@ -4,8 +4,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -77,7 +80,14 @@ func TestAMissingConfigurationSaysSoPlainly(t *testing.T) {
 	if code := run([]string{"-config", missing}, &out, &log); code != 2 {
 		t.Fatalf("exit %d", code)
 	}
-	if got := log.String(); strings.Contains(got, "<nil>") || !strings.Contains(got, missing+": no such file or directory") {
+	// The OS's own words, whatever they are: "no such file or directory" on
+	// Unix, "The system cannot find the file specified." on Windows.
+	_, serr := os.Stat(missing)
+	var pe *fs.PathError
+	if !errors.As(serr, &pe) {
+		t.Fatalf("stat: %v", serr)
+	}
+	if got := log.String(); strings.Contains(got, "<nil>") || !strings.Contains(got, missing+": "+pe.Err.Error()) {
 		t.Errorf("printed %q", got)
 	}
 }
