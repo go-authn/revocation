@@ -83,7 +83,7 @@ listen = ":8080"                             # optional: serve the verified list
 
 ```sh
 authn-revokd                    # run (-config /etc/authn-revokd/revokd.hcl by default); SIGHUP: sync now
-authn-revokd -once              # one sync, for a timer: exit 1 when a list is not current
+authn-revokd -once              # one sync, for a timer: exit 1 when a list is not current or could not be fetched
 authn-revokd -version
 ```
 

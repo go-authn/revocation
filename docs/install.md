@@ -230,8 +230,12 @@ expired". The server needs nothing more for that.
 
 ## Run as a timer instead (optional)
 
-`authn-revokd -once` syncs once and exits 1 when a list is not current. The
-outputs are written either way, and failed closed for sshd.
+`authn-revokd -once` syncs once and exits 1 when a list is not current, or when
+a fetch failed: the second is said apart ("not fetched: a (the list held is
+current until ...)"), because the outputs still carry that list and sshd is
+unaffected until it expires, but the timer reports it so it is seen before
+the list lapses. `/healthz` judges only what is served, and says ok in that
+case. The outputs are written either way, and failed closed for sshd.
 [`authn-revokd-once.service` and `.timer`](../packaging/systemd) run it every
 minute. They are for a host that wants no long-running process.
 

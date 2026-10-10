@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -87,6 +88,16 @@ type outputBlock struct {
 var nameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 func loadConfig(path string) (*config, error) {
+	// The file first, with the error the OS gives: hclparse reports a missing
+	// file as a diagnostic with no subject, which prints as
+	// "<nil>: Failed to read file; ...".
+	if _, err := os.Stat(path); err != nil {
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			return nil, pe.Err // the caller names the path already
+		}
+		return nil, err
+	}
 	parser := hclparse.NewParser()
 	f, diags := parser.ParseHCLFile(path)
 	if diags.HasErrors() {

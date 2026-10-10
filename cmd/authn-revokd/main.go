@@ -7,7 +7,7 @@
 // with listen, serves the verified copies to other agents as a mirror.
 //
 //	authn-revokd                                              # run: sync every refresh
-//	authn-revokd -config /etc/authn-revokd/revokd.hcl -once   # one sync, for a timer; exit 1 when a list is not current
+//	authn-revokd -config /etc/authn-revokd/revokd.hcl -once   # one sync, for a timer; exit 1 when a list is not current or could not be fetched
 //
 // It was called revokd until v0.6.0, and read /etc/revokd.hcl by default.
 // docs/install.md says how to run it as a service; PROTOCOL.md says what is
@@ -66,9 +66,12 @@ func run(args []string, out, log io.Writer) int {
 	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
 	fs.SetOutput(log)
 	path := fs.String("config", defaultConfig, "the configuration file")
-	once := fs.Bool("once", false, "sync once and exit: 1 when a list is not current")
+	once := fs.Bool("once", false, "sync once and exit: 1 when a list is not current, or could not be fetched")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0 // asked for, and answered
+		}
 		return 2
 	}
 	if *showVersion {
