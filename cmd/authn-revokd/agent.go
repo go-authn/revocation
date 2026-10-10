@@ -125,15 +125,34 @@ func (a *agent) syncOnce(ctx context.Context) error {
 			failed = append(failed, "output "+o.Name)
 		}
 	}
+	// Two different things go wrong here, and they used to be said with one
+	// word. A source whose fetch failed while the list it holds is still
+	// current is NOT "not current": the outputs carry that list, and sshd is
+	// fine until it expires. It is still a failure -- the timer exists to say
+	// so before the list lapses -- but it is said as what it is.
+	var stale []string
 	a.mu.RLock()
 	for i, err := range a.errs {
-		if err != nil {
-			failed = append(failed, a.cfg.Sources[i].Name)
+		if err == nil {
+			continue
 		}
+		if l := a.current(i); l != nil {
+			stale = append(stale, fmt.Sprintf("%s (the list held is current until %s)",
+				a.cfg.Sources[i].Name, l.Expires.UTC().Format(time.RFC3339)))
+			continue
+		}
+		failed = append(failed, a.cfg.Sources[i].Name)
 	}
 	a.mu.RUnlock()
+	var parts []string
 	if len(failed) > 0 {
-		return fmt.Errorf("not current: %s", strings.Join(failed, ", "))
+		parts = append(parts, "not current: "+strings.Join(failed, ", "))
+	}
+	if len(stale) > 0 {
+		parts = append(parts, "not fetched: "+strings.Join(stale, ", "))
+	}
+	if len(parts) > 0 {
+		return errors.New(strings.Join(parts, "; "))
 	}
 	return nil
 }

@@ -304,3 +304,31 @@ func TestFileURLs(t *testing.T) {
 		t.Error("a file URL on another host: accepted")
 	}
 }
+
+// A list signed by another key refuses on both attempts, and that is not a
+// race: the error says the signature does not verify, not that the list
+// "changed between it and its signature" -- which sent an operator looking
+// for a re-issue that never happened. It is still tried twice: the first
+// refusal could have been a race.
+func TestASignatureByAnotherKeyIsNotCalledARace(t *testing.T) {
+	ca, other := newSSHCA(t), newSSHCA(t)
+	now := time.Now()
+	is := &issuer{}
+	is.set(signedKRL(t, other, 1, now, now.Add(time.Hour)))
+	srv := httptest.NewTLSServer(is)
+	defer srv.Close()
+	f := krlFetcher(t, srv, ca, nil)
+	_, _, err := f.Fetch(context.Background())
+	if err == nil {
+		t.Fatal("a list signed by another CA was accepted")
+	}
+	if strings.Contains(err.Error(), "changed between") || errors.Is(err, errMismatch) {
+		t.Errorf("reported as a race: %v", err)
+	}
+	if !strings.Contains(err.Error(), "does not verify") {
+		t.Errorf("does not say the signature does not verify: %v", err)
+	}
+	if n := is.lists.Load(); n != 2 {
+		t.Errorf("%d list requests, want 2 (the race is still allowed for)", n)
+	}
+}

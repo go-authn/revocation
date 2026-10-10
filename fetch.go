@@ -141,6 +141,14 @@ func (f *Fetcher) Fetch(ctx context.Context) (*List, bool, error) {
 	changed, err := f.fetch(ctx)
 	if errors.Is(err, errMismatch) {
 		changed, err = f.fetch(ctx) // re-issued between the list and its signature
+		// The same signature refusing twice is not a race any more: say what
+		// it is. Reported as "the list changed between it and its signature"
+		// it sent an operator looking for a re-issue that never happened,
+		// when the list was signed by another key.
+		var r *signatureRace
+		if errors.As(err, &r) {
+			err = r.cause
+		}
 	}
 	return f.Held(), changed, err
 }
@@ -149,6 +157,16 @@ var (
 	errMismatch    = errors.New("revocation: the list changed between it and its signature")
 	errNotModified = errors.New("not modified")
 )
+
+// signatureRace is a signature that did not verify on a first attempt, which
+// may be a list re-issued between the two requests. It is errMismatch, so it
+// is tried once more; if the second attempt refuses too, Fetch reports the
+// cause itself.
+type signatureRace struct{ cause error }
+
+func (r *signatureRace) Error() string        { return errMismatch.Error() + ": " + r.cause.Error() }
+func (r *signatureRace) Is(target error) bool { return target == errMismatch }
+func (r *signatureRace) Unwrap() error        { return r.cause }
 
 // fetch makes one attempt, and reports whether the held list was replaced.
 func (f *Fetcher) fetch(ctx context.Context) (bool, error) {
@@ -181,7 +199,7 @@ func (f *Fetcher) fetch(ctx context.Context) (bool, error) {
 			// Possibly a list re-issued between the two requests by a
 			// server that ignores If-Match: tried once more, then it is
 			// an error.
-			return false, fmt.Errorf("%w: %w", errMismatch, err)
+			return false, &signatureRace{cause: err}
 		}
 	case CRL:
 		if l, err = VerifyCRL(raw, f.src.X509CA); err != nil {
