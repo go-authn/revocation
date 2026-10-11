@@ -81,8 +81,8 @@ Two files:
   what `ssh-keygen -Y verify` checks:
 
   ```sh
-  echo "ca@univ-a.fr namespaces=\"krl@go-authn.github.io\" $(cat ca.pub)" > allowed
-  ssh-keygen -Y verify -f allowed -I ca@univ-a.fr -n krl@go-authn.github.io \
+  echo "ca@univ-a.example namespaces=\"krl@go-authn.github.io\" $(cat ca.pub)" > allowed
+  ssh-keygen -Y verify -f allowed -I ca@univ-a.example -n krl@go-authn.github.io \
       -s univ-a.krl.sig < univ-a.krl
   ```
 
