@@ -27,12 +27,12 @@ import (
 //	refresh   = "1m"
 //
 //	source "univ-a-ssh" {
-//	  url     = "https://idp.univ-a.fr/ssh/krl"
+//	  url     = "https://idp.univ-a.example/ssh/krl"
 //	  ssh_ca  = "/etc/ssh/ca/univ-a.pub"
 //	  # revoke_keys = true            # may revoke any key, of any CA's users
 //	}
 //	source "univ-a-x509" {
-//	  url     = "https://idp.univ-a.fr/x509/crl"
+//	  url     = "https://idp.univ-a.example/x509/crl"
 //	  x509_ca = "/etc/ssl/univ-a-ca.pem"
 //	  max_age = "2h"
 //	}

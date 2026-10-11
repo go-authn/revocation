@@ -53,7 +53,7 @@ state_dir = "/var/lib/authn-revokd/state"   # the verified copies: rollback prot
 refresh   = "1m"
 
 source "univ-a-ssh" {
-  url    = "https://idp.univ-a.fr/ssh/krl"   # and .../ssh/krl.sig
+  url    = "https://idp.univ-a.example/ssh/krl"   # and .../ssh/krl.sig
   ssh_ca = "/etc/ssh/ca/univ-a.pub"          # what the list must be signed by
 }
 source "univ-b-ssh" {
@@ -62,7 +62,7 @@ source "univ-b-ssh" {
   # revoke_keys = true                       # this source may revoke any key, of any CA's users
 }
 source "univ-a-x509" {
-  url     = "https://idp.univ-a.fr/x509/crl"
+  url     = "https://idp.univ-a.example/x509/crl"
   x509_ca = "/etc/ssl/univ-a-ca.pem"
 }
 

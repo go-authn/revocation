@@ -107,12 +107,12 @@ refresh   = "1m"                            # optional, default 1m
 
 # A go-authn/bridge serves its KRL at /ssh/krl and the signature at /ssh/krl.sig.
 source "univ-a-ssh" {
-  url    = "https://idp.univ-a.fr/ssh/krl"           # required
+  url    = "https://idp.univ-a.example/ssh/krl"           # required
   ssh_ca = "/etc/authn-revokd/ca/univ-a-ssh.pub"     # required: ssh_ca or x509_ca
 }
 
 source "univ-a-x509" {
-  url     = "https://idp.univ-a.fr/x509/crl"
+  url     = "https://idp.univ-a.example/x509/crl"
   x509_ca = "/etc/authn-revokd/ca/univ-a-x509.pem"
 }
 
