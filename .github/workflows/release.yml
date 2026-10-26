@@ -72,7 +72,7 @@ jobs:
             out="authn-revokd-${os}-${arch}"; [ "$os" = windows ] && out="${out}.exe"
             echo "building $out"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-              go build -trimpath -ldflags="-s -w" -o "$dist/${out}" ./cmd/authn-revokd
+              go build -trimpath -ldflags="-w" -o "$dist/${out}" ./cmd/authn-revokd
           done
           cd "$dist" && sha256sum authn-revokd-* > SHA256SUMS && cat SHA256SUMS
 
