@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.27.3'
+          go-version-file: go.mod
           check-latest: true
           cache: true
       - name: sshd, the judge of what authn-revokd writes
@@ -64,7 +64,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
-        with: { go-version: '1.27.3', check-latest: true, cache: true }
+        with: { go-version-file: go.mod, check-latest: true, cache: true }
       - run: go test -race -count=1 ./...
 
   coverage:
@@ -73,7 +73,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
-        with: { go-version: '1.27.3', check-latest: true, cache: true }
+        with: { go-version-file: go.mod, check-latest: true, cache: true }
       - run: |
           FLOOR=93.0
           # The output is kept and shown on failure: sent to /dev/null, a
@@ -90,6 +90,17 @@ jobs:
             exit 1
           fi
 
+  # The toolchain is the one go.mod names (go-version-file), so a floor too
+  # low to carry the standard library's fixes is a finding HERE: govulncheck
+  # exits 3 on any, and the job fails.
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod, check-latest: true, cache: true }
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
   arches:
     name: arch ${{ matrix.goarch }}
     runs-on: ubuntu-latest
@@ -102,7 +113,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
-        with: { go-version: '1.27.3', check-latest: true, cache: true }
+        with: { go-version-file: go.mod, check-latest: true, cache: true }
       - run: GOARCH=${{ matrix.goarch }} go build ./...
       # ⛔ `qemu-user-static` is a VIRTUAL package on Ubuntu 26.04, which
       # `ubuntu-latest` became on 2026-10-19, and apt refuses to choose between its
