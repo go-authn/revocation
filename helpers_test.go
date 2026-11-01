@@ -59,7 +59,7 @@ func run(t *testing.T, dir string, name string, args ...string) (string, int) {
 	return "", -1
 }
 
-func write(t *testing.T, dir, name string, data []byte) string {
+func write(t testing.TB, dir, name string, data []byte) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
 	if err := os.WriteFile(p, data, 0o600); err != nil {
@@ -122,7 +122,7 @@ type x509CA struct {
 	key  *ecdsa.PrivateKey
 }
 
-func newX509CA(t *testing.T, cn string) x509CA {
+func newX509CA(t testing.TB, cn string) x509CA {
 	t.Helper()
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: cn},
@@ -136,7 +136,7 @@ func newX509CA(t *testing.T, cn string) x509CA {
 	return x509CA{cert: c, key: key}
 }
 
-func (c x509CA) crl(t *testing.T, num int64, this, next time.Time, ext []pkix.Extension, serials ...int64) []byte {
+func (c x509CA) crl(t testing.TB, num int64, this, next time.Time, ext []pkix.Extension, serials ...int64) []byte {
 	t.Helper()
 	var entries []x509.RevocationListEntry
 	for _, s := range serials {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/go-authn/revocation"
 )
@@ -96,6 +97,23 @@ func (a *agent) keep(s *sourceBlock, l *revocation.List) error {
 	os.Remove(old)
 	os.Remove(old + ".sig")
 	return nil
+}
+
+// sweepTemps removes the temporary files a killed writeAtomic left beside
+// base: ".<base>.<digits>" (os.CreateTemp). Nothing else is touched.
+func sweepTemps(dir, base string) {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	prefix := "." + base + "."
+	for _, e := range ents {
+		n, ok := strings.CutPrefix(e.Name(), prefix)
+		if !ok || n == "" || !e.Type().IsRegular() || strings.Trim(n, "0123456789") != "" {
+			continue
+		}
+		os.Remove(filepath.Join(dir, e.Name()))
+	}
 }
 
 // checkStateDir refuses a state directory others can write to: whoever can

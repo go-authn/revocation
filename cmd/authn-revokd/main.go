@@ -120,8 +120,7 @@ func serve(ctx context.Context, a *agent, listen string, log io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(log, "%s: serving the verified lists on %s\n", cmdName, ln.Addr())
-	srv := &http.Server{Handler: a.handler(), ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout: time.Minute, MaxHeaderBytes: 16 << 10}
+	srv := newMirror(a.handler())
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
 	go a.run(ctx)

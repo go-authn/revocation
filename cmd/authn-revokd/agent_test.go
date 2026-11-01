@@ -555,7 +555,7 @@ output "nginx" {
 	var calls [][]string
 	fail := errors.New("nginx: [emerg] something")
 	failing := true
-	a.exec = func(argv []string) error {
+	a.exec = func(_ context.Context, argv []string) error {
 		calls = append(calls, argv)
 		if failing {
 			return fail
