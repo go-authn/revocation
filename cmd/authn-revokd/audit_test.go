@@ -190,7 +190,6 @@ func TestAListThatCannotBeMergedFailsClosedForItsOwnCAOnly(t *testing.T) {
 	}
 	// An output that cannot be written says so too, beside the source.
 	a.cfg.Outputs[0].Path = filepath.Join(dir, "missing", "revoked.krl")
-	clear(a.written)
 	a.syncOnce(context.Background())
 	if err := a.outErrs["sshd"]; err == nil || !strings.Contains(err.Error(), "source a") || !strings.Contains(err.Error(), "missing") {
 		t.Errorf("an unwritable output: %v", err)
@@ -228,7 +227,6 @@ func TestListsThatMergeAloneButNotTogetherFailTheOutputClosed(t *testing.T) {
 	}
 	// And when even the fail-closed list cannot be written, both are said.
 	a.cfg.Outputs[0].Path = filepath.Join(dir, "missing", "revoked.krl")
-	clear(a.written)
 	a.syncOnce(context.Background())
 	if err := a.outErrs["sshd"]; err == nil || !strings.Contains(err.Error(), "missing") {
 		t.Errorf("an unwritable output: %v", err)

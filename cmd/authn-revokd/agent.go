@@ -23,6 +23,24 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// fetchTimeout bounds one source's fetch (up to four requests), and
+// onChangeTimeout one run of an output's on_change command.
+var (
+	fetchTimeout    = 2 * time.Minute
+	onChangeTimeout = time.Minute
+)
+
+// maxParallelFetches bounds the sources fetched at once.
+const maxParallelFetches = 16
+
+// newMirror is the HTTP server of the mirror. ⛔ It had a header timeout and
+// an idle timeout only: a client that opened a connection, asked for a 32 MiB
+// list and never read it held the connection (and its goroutine) forever.
+func newMirror(h http.Handler) *http.Server {
+	return &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
+		WriteTimeout: 2 * time.Minute, IdleTimeout: time.Minute, MaxHeaderBytes: 16 << 10}
+}
+
 // agent fetches every source, keeps the verified copies in the state
 // directory, and writes the outputs from them.
 type agent struct {
@@ -30,16 +48,15 @@ type agent struct {
 	log io.Writer
 	now func() time.Time
 	// exec runs an output's on_change command; replaced in tests.
-	exec func(argv []string) error
+	exec func(ctx context.Context, argv []string) error
 	// wake, when it delivers, syncs now instead of at the next refresh:
 	// SIGHUP (notifyHUP). nil never delivers.
 	wake <-chan os.Signal
 
 	fetchers []*revocation.Fetcher
 
-	mu      sync.RWMutex
-	errs    []error // the last fetch of each source
-	written map[string][]byte
+	mu   sync.RWMutex
+	errs []error // the last fetch of each source
 	// due is the outputs whose on_change has not succeeded since they
 	// were written: a reload that failed is tried again at the next sync.
 	due map[string]bool
@@ -67,10 +84,16 @@ func newAgent(cfg *config, log io.Writer, client *http.Client) (*agent, error) {
 		return nil, err
 	}
 	a := &agent{cfg: cfg, log: log, now: time.Now, exec: runCommand,
-		errs: make([]error, len(cfg.Sources)), written: map[string][]byte{}, due: map[string]bool{}, outErrs: map[string]error{}, dropNoted: map[string]*revocation.List{},
+		errs: make([]error, len(cfg.Sources)), due: map[string]bool{}, outErrs: map[string]error{}, dropNoted: map[string]*revocation.List{},
 		trials: map[string]trial{}, tags: map[*revocation.List]string{}}
+	// ⛔ A write killed between creating its temporary file and renaming it
+	// left the file there for good, one more at each kill.
+	for _, o := range cfg.Outputs {
+		sweepTemps(filepath.Dir(o.Path), filepath.Base(o.Path))
+	}
 	for i := range cfg.Sources {
 		s := &cfg.Sources[i]
+		sweepTemps(cfg.StateDir, s.Name+".state")
 		held, err := a.loadHeld(s)
 		if err != nil {
 			// A copy that no longer verifies is not trusted -- not even to
@@ -97,9 +120,34 @@ func (a *agent) clock() time.Time { return a.now() }
 // syncOnce fetches every source once and rewrites the outputs that changed.
 // It returns an error naming every source with no current list.
 func (a *agent) syncOnce(ctx context.Context) error {
+	// ⛔ The sources are fetched together, each within fetchTimeout. One after
+	// the other, one upstream that does not answer (a request waits a minute)
+	// held every other source's refresh -- and the output's failing closed --
+	// behind it.
+	type fetched struct {
+		l       *revocation.List
+		changed bool
+		err     error
+	}
+	results := make([]fetched, len(a.cfg.Sources))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxParallelFetches)
+	for i := range a.cfg.Sources {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			fctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+			defer cancel()
+			l, changed, err := a.fetchers[i].Fetch(fctx)
+			results[i] = fetched{l, changed, err}
+		}()
+	}
+	wg.Wait()
 	for i := range a.cfg.Sources {
 		s := &a.cfg.Sources[i]
-		l, changed, err := a.fetchers[i].Fetch(ctx)
+		l, changed, err := results[i].l, results[i].changed, results[i].err
 		if err == nil && changed {
 			if werr := a.keep(s, l); werr != nil {
 				err = fmt.Errorf("keeping it: %w", werr)
@@ -120,7 +168,7 @@ func (a *agent) syncOnce(ctx context.Context) error {
 	}
 	var failed []string
 	for _, o := range a.cfg.Outputs {
-		if err := a.writeOutput(o); err != nil {
+		if err := a.writeOutput(ctx, o); err != nil {
 			fmt.Fprintf(a.log, "output %s: %v\n", o.Name, err)
 			failed = append(failed, "output "+o.Name)
 		}
@@ -303,7 +351,7 @@ func (a *agent) noteDropped(source string, l *revocation.List) bool {
 
 // writeOutput writes an output when its content changed, and runs its
 // on_change command then -- and again at every sync until it succeeds.
-func (a *agent) writeOutput(o outputBlock) (err error) {
+func (a *agent) writeOutput(ctx context.Context, o outputBlock) (err error) {
 	defer func() {
 		a.mu.Lock()
 		a.outErrs[o.Name] = err
@@ -313,7 +361,7 @@ func (a *agent) writeOutput(o outputBlock) (err error) {
 	if rerr != nil && data != nil {
 		// Some sources failed closed, each for its own CA; the others
 		// keep their lists.
-		if werr := a.store(o, data); werr != nil {
+		if werr := a.store(ctx, o, data); werr != nil {
 			return errors.Join(rerr, werr)
 		}
 		return rerr
@@ -328,7 +376,7 @@ func (a *agent) writeOutput(o outputBlock) (err error) {
 		if data, err = a.failClosed(o); err != nil {
 			return fmt.Errorf("%w; and the fail-closed list: %w", rerr, err)
 		}
-		if werr := a.store(o, data); werr != nil {
+		if werr := a.store(ctx, o, data); werr != nil {
 			return werr
 		}
 		return fmt.Errorf("%w: every certificate of its CAs is refused until it renders again", rerr)
@@ -336,7 +384,7 @@ func (a *agent) writeOutput(o outputBlock) (err error) {
 	if data == nil {
 		return nil
 	}
-	return a.store(o, data)
+	return a.store(ctx, o, data)
 }
 
 // failClosed is an sshd output that refuses every certificate of every CA
@@ -351,26 +399,64 @@ func (a *agent) failClosed(o outputBlock) ([]byte, error) {
 
 // store writes an output's content when it changed, and runs its on_change
 // command then -- and again at every sync until it succeeds.
-func (a *agent) store(o outputBlock, data []byte) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if !bytes.Equal(a.written[o.Name], data) {
-		if old, err := os.ReadFile(o.Path); err != nil || !bytes.Equal(old, data) {
-			if err := writeAtomic(o.Path, data, 0o644); err != nil {
-				return err
-			}
-			fmt.Fprintf(a.log, "output %s: wrote %s\n", o.Name, o.Path)
-			a.due[o.Name] = len(o.OnChange) > 0
+//
+// ⛔ The file is compared with what is on disk at every sync, not with what
+// was last written: a file deleted, truncated or replaced behind the agent's
+// back stayed so until the list changed (days), and sshd refuses every login
+// when its RevokedKeys is unreadable. And a.mu is not held while the file is
+// written or the command runs: a reload that hung held /healthz with it.
+func (a *agent) store(ctx context.Context, o outputBlock, data []byte) error {
+	if old, err := os.ReadFile(o.Path); err != nil || !bytes.Equal(old, data) {
+		if err := writeAtomic(o.Path, data, 0o644); err != nil {
+			return err
 		}
-		a.written[o.Name] = data
+		fmt.Fprintf(a.log, "output %s: wrote %s\n", o.Name, o.Path)
+		a.mu.Lock()
+		a.due[o.Name] = len(o.OnChange) > 0
+		a.mu.Unlock()
 	}
-	if a.due[o.Name] {
-		if err := a.exec(o.OnChange); err != nil {
+	a.mu.RLock()
+	due := a.due[o.Name]
+	a.mu.RUnlock()
+	if due {
+		cctx, cancel := context.WithTimeout(ctx, onChangeTimeout)
+		err := a.exec(cctx, o.OnChange)
+		cancel()
+		if err != nil {
 			return fmt.Errorf("on_change %q: %w", o.OnChange, err)
 		}
+		a.mu.Lock()
 		a.due[o.Name] = false
+		a.mu.Unlock()
 	}
 	return nil
+}
+
+// untilLapse is how long until the first list that is current now stops being
+// (its expiry, or its issue plus max_age), and false when none is current. The
+// instant itself is not current (List.Current), so the sync is made a moment
+// later; never sooner than a second from now, so that a list lapsing as it is
+// fetched cannot spin the loop.
+func (a *agent) untilLapse() (time.Duration, bool) {
+	now := a.now()
+	var first time.Time
+	for i := range a.cfg.Sources {
+		l := a.current(i)
+		if l == nil {
+			continue
+		}
+		end := l.Expires
+		if m := a.cfg.Sources[i].maxAge; m > 0 && l.Issued.Add(m).Before(end) {
+			end = l.Issued.Add(m)
+		}
+		if first.IsZero() || end.Before(first) {
+			first = end
+		}
+	}
+	if first.IsZero() {
+		return 0, false
+	}
+	return max(first.Sub(now)+100*time.Millisecond, time.Second), true
 }
 
 // run syncs until ctx ends, every refresh give or take a tenth: a fleet of
@@ -379,11 +465,21 @@ func (a *agent) run(ctx context.Context) {
 	for {
 		a.syncOnce(ctx)
 		jitter := time.Duration(rand.Int64N(int64(a.cfg.refresh)/5+1)) - a.cfg.refresh/10
+		wait := a.cfg.refresh + jitter
+		// ⛔ Not later than the first list to lapse: with refresh = 1h, a list
+		// that lapsed was still on disk, current as far as sshd could tell,
+		// until the next sync.
+		if d, ok := a.untilLapse(); ok && d < wait {
+			wait = d
+		}
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-time.After(a.cfg.refresh + jitter):
+		case <-timer.C:
 		case s := <-a.wake:
+			timer.Stop()
 			fmt.Fprintf(a.log, "%v: syncing now\n", s)
 		}
 	}
@@ -427,8 +523,11 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	return nil
 }
 
-func runCommand(argv []string) error {
-	cmd := exec.Command(argv[0], argv[1:]...)
+func runCommand(ctx context.Context, argv []string) error {
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	// ⛔ Without WaitDelay, killing the command at its deadline is not enough:
+	// a child it started holds the output pipe, and Wait waits for that.
+	cmd.WaitDelay = time.Second
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))

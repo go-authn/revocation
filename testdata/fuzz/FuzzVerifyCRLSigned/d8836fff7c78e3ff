@@ -1,0 +1,6 @@
+go test fuzz v1
+int64(-1)
+int64(54)
+[]byte("\x01\xa3\xa3\xa3\xa3\xa3\xa3\xa3\x02\x03")
+bool(false)
+[]byte("")

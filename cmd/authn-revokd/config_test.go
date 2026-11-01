@@ -197,11 +197,30 @@ func TestRunCommand(t *testing.T) {
 	if _, err := os.Stat("/bin/sh"); err != nil {
 		t.Skip("no /bin/sh")
 	}
-	if err := runCommand([]string{"/bin/sh", "-c", "exit 0"}); err != nil {
+	ctx := context.Background()
+	if err := runCommand(ctx, []string{"/bin/sh", "-c", "exit 0"}); err != nil {
 		t.Error(err)
 	}
-	if err := runCommand([]string{"/bin/sh", "-c", "echo nope; exit 3"}); err == nil || !strings.Contains(err.Error(), "nope") {
+	if err := runCommand(ctx, []string{"/bin/sh", "-c", "echo nope; exit 3"}); err == nil || !strings.Contains(err.Error(), "nope") {
 		t.Errorf("a failing command: %v", err)
+	}
+}
+
+// A command that hangs is killed with its context, and so is the child that
+// holds its output open (without WaitDelay, Wait waits for that child).
+func TestRunCommandIsKilledWithItsContext(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := runCommand(ctx, []string{"/bin/sh", "-c", "sleep 30; sleep 30"})
+	if err == nil {
+		t.Error("a killed command succeeded")
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("the command was waited for %v", d)
 	}
 }
 

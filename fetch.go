@@ -3,6 +3,7 @@
 package revocation
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"errors"
@@ -48,7 +49,7 @@ type Source struct {
 func FilePath(u string) (string, error) {
 	p, err := url.Parse(u)
 	if err != nil || p.Scheme != "file" || (p.Host != "" && p.Host != "localhost") || p.Path == "" {
-		return "", fmt.Errorf("revocation: %q is not a file URL of a local path", u)
+		return "", fmt.Errorf("revocation: %q is not a file URL of a local path", redact(u))
 	}
 	path := p.Path
 	if runtime.GOOS == "windows" && len(path) >= 3 && path[0] == '/' && path[2] == ':' {
@@ -95,7 +96,7 @@ type Fetcher struct {
 func NewFetcher(src Source, held *List) (*Fetcher, error) {
 	u, err := url.Parse(src.URL)
 	if err != nil {
-		return nil, fmt.Errorf("revocation: %q: %w", src.URL, err)
+		return nil, fmt.Errorf("revocation: a URL that does not parse: %w", redactErr(err))
 	}
 	switch u.Scheme {
 	case "http", "https":
@@ -104,7 +105,7 @@ func NewFetcher(src Source, held *List) (*Fetcher, error) {
 			return nil, err
 		}
 	default:
-		return nil, fmt.Errorf("revocation: %q: an http, https or file URL", src.URL)
+		return nil, fmt.Errorf("revocation: %q: an http, https or file URL", redact(src.URL))
 	}
 	switch {
 	case src.Kind == KRL && src.SSHCA == nil:
@@ -170,6 +171,9 @@ func (r *signatureRace) Unwrap() error        { return r.cause }
 
 // fetch makes one attempt, and reports whether the held list was replaced.
 func (f *Fetcher) fetch(ctx context.Context) (bool, error) {
+	// ⛔ Errors name the source without its password or query, which a URL
+	// may carry and a log or a mirror's /healthz must not.
+	shown := redact(f.src.URL)
 	f.mu.Lock()
 	held, heldTag := f.held, f.etag
 	f.mu.Unlock()
@@ -179,7 +183,7 @@ func (f *Fetcher) fetch(ctx context.Context) (bool, error) {
 	raw, tag, err := f.get(ctx, f.src.URL, maxSizeOf(f.src.Kind), "If-None-Match", heldTag)
 	if errors.Is(err, errNotModified) {
 		if held == nil {
-			return false, fmt.Errorf("revocation: %s answered 304 and no copy is held", f.src.URL)
+			return false, fmt.Errorf("revocation: %s answered 304 and no copy is held", shown)
 		}
 		// Still the same list -- which may have expired since: a 304 is
 		// no news, and the caller asks Current of what it holds.
@@ -195,19 +199,26 @@ func (f *Fetcher) fetch(ctx context.Context) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if l, err = VerifyKRL(raw, sig, f.src.SSHCA); err != nil {
+		if held != nil && held.Kind == KRL && bytes.Equal(raw, held.Raw) && bytes.Equal(sig, held.Sig) {
+			// ⛔ The very bytes already verified against this source's CA:
+			// not verified and parsed again (a source that sends no ETag is
+			// downloaded at every poll). Currency is still judged below.
+			l = held
+		} else if l, err = VerifyKRL(raw, sig, f.src.SSHCA); err != nil {
 			// Possibly a list re-issued between the two requests by a
 			// server that ignores If-Match: tried once more, then it is
 			// an error.
 			return false, &signatureRace{cause: err}
 		}
 	case CRL:
-		if l, err = VerifyCRL(raw, f.src.X509CA); err != nil {
+		if der, ok := crlDER(raw); held != nil && held.Kind == CRL && ok && bytes.Equal(der, held.Raw) {
+			l = held // as above
+		} else if l, err = VerifyCRL(raw, f.src.X509CA); err != nil {
 			return false, err
 		}
 	}
 	if err := l.Current(f.now(), f.src.MaxAge); err != nil {
-		return false, fmt.Errorf("%s: %w", f.src.URL, err)
+		return false, fmt.Errorf("%s: %w", shown, err)
 	}
 	if l.Same(held) {
 		f.mu.Lock()
@@ -216,7 +227,7 @@ func (f *Fetcher) fetch(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	if err := l.Follows(held); err != nil {
-		return false, fmt.Errorf("%s: %w", f.src.URL, err)
+		return false, fmt.Errorf("%s: %w", shown, err)
 	}
 	f.mu.Lock()
 	f.held, f.etag = l, tag
@@ -234,17 +245,26 @@ func maxSizeOf(k Kind) int64 {
 // get fetches u, at most limit bytes, with the conditional header cond when
 // tag is not empty; it returns the body and its ETag.
 func (f *Fetcher) get(ctx context.Context, u string, limit int64, cond, tag string) ([]byte, string, error) {
+	shown := redact(u)
 	if strings.HasPrefix(u, "file://") {
 		path, err := FilePath(u)
 		if err != nil {
 			return nil, "", err
+		}
+		// ⛔ Not opened before it is known to be a regular file: open(2) of a
+		// FIFO blocks until a writer comes, ignoring the context, and the
+		// agent would stop syncing -- and with it failing closed.
+		if fi, err := os.Stat(path); err != nil {
+			return nil, "", fmt.Errorf("revocation: %w", err)
+		} else if !fi.Mode().IsRegular() {
+			return nil, "", fmt.Errorf("revocation: %s is not a regular file (%v)", path, fi.Mode().Type())
 		}
 		fh, err := os.Open(path)
 		if err != nil {
 			return nil, "", fmt.Errorf("revocation: %w", err)
 		}
 		defer fh.Close()
-		return readBounded(fh, limit, u)
+		return readBounded(fh, limit, shown)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -265,10 +285,37 @@ func (f *Fetcher) get(ctx context.Context, u string, limit int64, cond, tag stri
 	case http.StatusPreconditionFailed:
 		return nil, "", errMismatch
 	default:
-		return nil, "", fmt.Errorf("revocation: %s answered %s", u, res.Status)
+		return nil, "", fmt.Errorf("revocation: %s answered %s", shown, res.Status)
 	}
-	b, _, err := readBounded(res.Body, limit, u)
+	b, _, err := readBounded(res.Body, limit, shown)
 	return b, res.Header.Get("ETag"), err
+}
+
+// redact is u without the password and the query a URL may carry: what an
+// error, a log line or a mirror's /healthz may say.
+func redact(u string) string {
+	p, err := url.Parse(u)
+	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err // url.Error repeats the URL
+		}
+		return fmt.Sprintf("(a URL that does not parse: %v)", err)
+	}
+	if p.RawQuery != "" {
+		p.RawQuery = "xxxxx"
+	}
+	p.Fragment, p.RawFragment = "", ""
+	return p.Redacted()
+}
+
+// redactErr is err of a url.Parse of u, without u.
+func redactErr(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return ue.Err
+	}
+	return err
 }
 
 func readBounded(r io.Reader, limit int64, what string) ([]byte, string, error) {

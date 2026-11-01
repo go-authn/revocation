@@ -74,7 +74,7 @@ output "nginx" {                             # nginx: ssl_crl /var/lib/authn-rev
   path      = "/var/lib/authn-revokd/univ-a.crl"
   sources   = ["univ-a-x509"]
   format    = "pem"
-  # on_change = ["/usr/local/bin/notify-something"]   # retried at each sync until it succeeds;
+  # on_change = ["/usr/local/bin/notify-something"]   # killed after a minute; retried at each sync until it succeeds;
   #   under the systemd unit it runs unprivileged: reload nginx with a path unit (docs/install.md)
 }
 
@@ -160,6 +160,27 @@ authn-revokd -version
   (`go test -run '^$' -bench Mirror ./cmd/authn-revokd`).
 
 ## Reviewed
+
+**An audit, fuzzing and chaos pass of v0.6.6** ([CHANGELOG](CHANGELOG.md),
+v0.6.7) found, each proved by a failing test:
+- a list that lapsed was refused only at the next sync, up to `refresh` later
+  (the agent now wakes at the first expiry);
+- one upstream that never answers delayed every other source and the outputs
+  (sources are now fetched together, each within two minutes);
+- a hung `on_change` command held the agent's lock, so `/healthz` and the next
+  sync hung (it now runs without the lock and is killed after a minute);
+- an output file deleted or truncated behind the agent's back stayed so until
+  the list changed (it is compared with the disk at every sync);
+- a `file://` source naming a FIFO blocked the agent for good;
+- a URL's password or token appeared in errors, logs and `/healthz`;
+- a CRL number of `-1` was accepted (found by fuzzing; RFC 5280 5.2.3);
+- a source that sends no `ETag` had its list verified and parsed again at every
+  poll: 100 000 revocations cost 300 138 allocations (97 MB) a poll, now 37.
+
+Eight fuzz targets cover the CRL, KRL and signature checks (also behind a valid
+signature, with a fixed CA key), the state file and the configuration.
+`govulncheck` reports one advisory in a module required and not called,
+GO-2026-5932 (`x/crypto/openpgp`, unmaintained, no fixed version).
 
 **A security audit of v0.2.0** found that `MergeCA` (krl v0.3.0) also dropped
 a CA's revocations of user keys and of its own key. A CA revoking a

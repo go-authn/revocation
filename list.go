@@ -165,6 +165,11 @@ func VerifyCRL(raw []byte, ca *x509.Certificate) (*List, error) {
 	switch {
 	case rl.Number == nil:
 		return nil, errors.New("revocation: the CRL has no CRL number, so it cannot be ordered")
+	case rl.Number.Sign() < 0 || rl.Number.BitLen() > 159:
+		// RFC 5280 5.2.3: CRLNumber ::= INTEGER (0..MAX), and "MUST NOT use
+		// CRLNumber values longer than 20 octets". A negative number orders
+		// before every other and breaks the rollback guard's arithmetic.
+		return nil, fmt.Errorf("revocation: the CRL number is outside 0..2^159 (RFC 5280 5.2.3)")
 	case rl.NextUpdate.IsZero():
 		return nil, errors.New("revocation: the CRL has no nextUpdate, so it never stops being current")
 	case !rl.NextUpdate.After(rl.ThisUpdate):
@@ -186,6 +191,15 @@ func VerifyCRL(raw []byte, ca *x509.Certificate) (*List, error) {
 		}
 	}
 	return &List{Kind: CRL, Raw: der, Version: rl.Number, Issued: rl.ThisUpdate, Expires: rl.NextUpdate, CRL: rl}, nil
+}
+
+// crlDER is the DER of a CRL given as DER or PEM, as VerifyCRL reads it; false
+// for a PEM block that is not a CRL.
+func crlDER(raw []byte) ([]byte, bool) {
+	if b, _ := pem.Decode(raw); b != nil {
+		return b.Bytes, b.Type == "X509 CRL"
+	}
+	return raw, true
 }
 
 // Current reports whether l may be used at now: not past its expiry, and,
