@@ -58,7 +58,7 @@ Conflicts=authn-revokd-once.timer authn-revokd-once.service
 
 [Service]
 Type=exec
-ExecStart=/usr/local/bin/authn-revokd -config /etc/authn-revokd/revokd.hcl
+ExecStart=/usr/local/bin/authn-revokd --config /etc/authn-revokd/revokd.hcl
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5s

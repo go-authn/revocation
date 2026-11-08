@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
-# authn-revokd -once: one sync, then exit. Started by authn-revokd-once.timer,
+# authn-revokd --once: one sync, then exit. Started by authn-revokd-once.timer,
 # for a host that wants no long-running process. Exits 1 (and the unit is
 # "failed") when a list is not current: the outputs are written all the same,
 # failed closed for sshd, and the next tick tries again.
@@ -20,7 +20,7 @@ Conflicts=authn-revokd.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/authn-revokd -config /etc/authn-revokd/revokd.hcl -once
+ExecStart=/usr/local/bin/authn-revokd --config /etc/authn-revokd/revokd.hcl --once
 # A sync that hangs on a source must not outlive the next tick.
 TimeoutStartSec=5min
 

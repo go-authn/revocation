@@ -80,7 +80,7 @@ Then install them:
 
 ```sh
 sudo install -m 0755 "authn-revokd-linux-$arch" /usr/local/bin/authn-revokd
-authn-revokd -version                     # authn-revokd v0.6.0
+authn-revokd --version                    # authn-revokd v0.6.0
 
 sudo install -m 0644 authn-revokd.conf /usr/lib/sysusers.d/authn-revokd.conf
 sudo systemd-sysusers /usr/lib/sysusers.d/authn-revokd.conf
@@ -230,7 +230,7 @@ expired". The server needs nothing more for that.
 
 ## Run as a timer instead (optional)
 
-`authn-revokd -once` syncs once and exits 1 when a list is not current, or when
+`authn-revokd --once` syncs once and exits 1 when a list is not current, or when
 a fetch failed: the second is said apart ("not fetched: a (the list held is
 current until ...)"), because the outputs still carry that list and sshd is
 unaffected until it expires, but the timer reports it so it is seen before
@@ -321,7 +321,7 @@ sudo install -m 0755 authn-revokd-linux-$arch /usr/local/bin/authn-revokd.new
 sudo mv /usr/local/bin/authn-revokd /usr/local/bin/authn-revokd.prev
 sudo mv /usr/local/bin/authn-revokd.new /usr/local/bin/authn-revokd
 sudo systemctl restart authn-revokd
-authn-revokd -version && journalctl -u authn-revokd -n 5
+authn-revokd --version && journalctl -u authn-revokd -n 5
 ```
 
 Read the release notes for changes to the unit or the configuration. Compare
