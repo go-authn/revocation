@@ -94,14 +94,19 @@ func newAgent(cfg *config, log io.Writer, client *http.Client) (*agent, error) {
 	for i := range cfg.Sources {
 		s := &cfg.Sources[i]
 		sweepTemps(cfg.StateDir, s.Name+".state")
-		held, err := a.loadHeld(s)
+		held, floor, err := a.loadHeld(s)
 		if err != nil {
-			// A copy that no longer verifies is not trusted -- not even to
-			// order the next one -- and is said out loud.
+			// A copy that no longer verifies is not trusted for its content,
+			// and is said out loud; when its position can be read it still
+			// orders what comes next.
 			fmt.Fprintf(a.log, "%s: the copy in %s is not used: %v\n", s.Name, cfg.StateDir, err)
+			if floor != nil {
+				fmt.Fprintf(a.log, "%s: it still orders what comes next: no list older than version %v, issued %s, is accepted until one that verifies is held; remove %s if the CA was replaced\n",
+					s.Name, floor.Version, floor.Issued.UTC().Format(time.RFC3339), a.stateFile(s))
+			}
 		}
 		f, err := revocation.NewFetcher(revocation.Source{URL: s.URL, Kind: s.kind, SSHCA: s.sshCA,
-			X509CA: s.x509CA, MaxAge: s.maxAge, Client: client, Clock: a.clock}, held)
+			X509CA: s.x509CA, MaxAge: s.maxAge, Client: client, Clock: a.clock, Floor: floor}, held)
 		if err != nil {
 			return nil, fmt.Errorf("source %q: %w", s.Name, err)
 		}

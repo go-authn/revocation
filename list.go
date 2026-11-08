@@ -243,6 +243,66 @@ func (l *List) Follows(held *List) error {
 	return nil
 }
 
+// Floor is the position of a list that could not be verified: its version
+// and issue time, read without trusting them. It is an ordering hint only --
+// nothing it says is used -- and it keeps the rollback guard (PROTOCOL.md
+// rule 2) when the copy held does not verify: damaged, or written under
+// another CA key. A forged floor can only refuse more, never admit more.
+type Floor struct {
+	Kind    Kind
+	Version *big.Int
+	Issued  time.Time
+}
+
+// UnverifiedOrder reads the version and issue time of a list WITHOUT
+// verifying it, for a Floor. raw is a KRL, or a CRL in DER or PEM; the
+// signature is not looked at, so the result is only as good as the copy.
+func UnverifiedOrder(kind Kind, raw []byte) (*Floor, error) {
+	switch kind {
+	case KRL:
+		k, err := krl.Parse(raw)
+		if err != nil {
+			return nil, fmt.Errorf("revocation: %w", err)
+		}
+		return &Floor{Kind: KRL, Version: new(big.Int).SetUint64(k.Version), Issued: k.GeneratedDate}, nil
+	case CRL:
+		if len(raw) > maxCRL {
+			return nil, fmt.Errorf("revocation: a CRL of %d bytes, past %d", len(raw), maxCRL)
+		}
+		der, ok := crlDER(raw)
+		if !ok {
+			return nil, errors.New("revocation: a PEM block that is not an X509 CRL")
+		}
+		rl, err := x509.ParseRevocationList(der)
+		if err != nil {
+			return nil, fmt.Errorf("revocation: %w", err)
+		}
+		if rl.Number == nil {
+			return nil, errors.New("revocation: the CRL has no CRL number")
+		}
+		return &Floor{Kind: CRL, Version: rl.Number, Issued: rl.ThisUpdate}, nil
+	}
+	return nil, fmt.Errorf("revocation: unknown kind %v", kind)
+}
+
+// Admits reports whether l, a list that verified, may be the first held
+// after the copy f describes did not verify: the same rule as Follows.
+func (f *Floor) Admits(l *List) error {
+	if l.Kind != f.Kind {
+		return fmt.Errorf("revocation: a %s cannot follow a %s", l.Kind, f.Kind)
+	}
+	switch c := l.Version.Cmp(f.Version); {
+	case c > 0:
+		return nil
+	case c < 0:
+		return fmt.Errorf("%w: version %v, but the copy kept before did not verify and was at %v; it still orders what comes next (remove the state file if the CA changed)", ErrRollback, l.Version, f.Version)
+	case l.Issued.Before(f.Issued):
+		return fmt.Errorf("%w: version %v issued at %s, the copy kept before (unverified) at %s; it still orders what comes next (remove the state file if the CA changed)", ErrRollback, l.Version,
+			l.Issued.UTC().Format(time.RFC3339), f.Issued.UTC().Format(time.RFC3339))
+	}
+	return nil
+}
+
 // Same reports whether l and o are the same issue of a list.
 func (l *List) Same(o *List) bool {
 	return o != nil && l.Kind == o.Kind && bytes.Equal(l.Raw, o.Raw)
