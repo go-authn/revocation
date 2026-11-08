@@ -3,6 +3,21 @@
 Versions follow [semantic versioning](https://semver.org); below v1.0.0 a
 breaking change bumps the minor version.
 
+## v0.7.0
+
+### Changed
+
+- **`authn-revokd` uses cobra** (#26), as the fleet's other commands do: POSIX
+  flags `--config`/`-c`, `--once`/`-o`, `--version`/`-v`, `--help`/`-h`,
+  `--config=PATH`. `--help` now prints to stdout. The single-dash spellings of
+  earlier releases (`-config`, `-once`, `-version`, `-help`, with `=` or a
+  separate value) are **still accepted**, rewritten before parsing, with one
+  deprecation line per flag on stderr; they will be removed in a later
+  release. Exit statuses are unchanged: 0, 1 (failure, or a list not current
+  under `--once`), 2 (usage, or an unreadable configuration). The units in
+  `packaging/` and `docs/install.md` use the new spelling; deployed units need
+  no change.
+
 ## v0.6.8
 
 ### Fixed

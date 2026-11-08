@@ -7,7 +7,7 @@
 // with listen, serves the verified copies to other agents as a mirror.
 //
 //	authn-revokd                                              # run: sync every refresh
-//	authn-revokd -config /etc/authn-revokd/revokd.hcl -once   # one sync, for a timer; exit 1 when a list is not current or could not be fetched
+//	authn-revokd --config /etc/authn-revokd/revokd.hcl --once # one sync, for a timer; exit 1 when a list is not current or could not be fetched
 //
 // It was called revokd until v0.6.0, and read /etc/revokd.hcl by default.
 // docs/install.md says how to run it as a service; PROTOCOL.md says what is
@@ -17,7 +17,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -25,8 +24,11 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
 // cmdName is the command's name, in its messages, its -version and the
@@ -58,55 +60,149 @@ func migrationHint(explicit bool, path, old string) string {
 	return fmt.Sprintf(" (%s exists: the default before v0.6.0. Move it to %s, or pass -config %s)", old, path, old)
 }
 
+// osExit allows tests to override os.Exit.
+var osExit = os.Exit
+
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	osExit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
+// exitError carries the exit status of a failed run: 1 for a runtime failure,
+// 2 for a usage or configuration error. It has already been printed.
+type exitError struct{ code int }
+
+func (e *exitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+
+// run executes the command with args and returns its exit status: 0, 1 (a
+// runtime failure, or a list not current under --once) or 2 (a usage error or
+// a configuration that could not be read). The status is unchanged since the
+// flag package: only the flag spelling moved.
 func run(args []string, out, log io.Writer) int {
-	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
-	fs.SetOutput(log)
-	path := fs.String("config", defaultConfig, "the configuration file")
-	once := fs.Bool("once", false, "sync once and exit: 1 when a list is not current, or could not be fetched")
-	showVersion := fs.Bool("version", false, "print the version and exit")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0 // asked for, and answered
-		}
-		return 2
-	}
-	if *showVersion {
-		fmt.Fprintf(out, "%s %s\n", cmdName, version())
+	cmd := RootCmd()
+	cmd.SetOut(out)
+	cmd.SetErr(log)
+	cmd.SetArgs(normalizeArgs(args, log))
+	err := cmd.Execute()
+	if err == nil {
 		return 0
 	}
-	cfg, err := loadConfig(*path)
+	var ee *exitError
+	if errors.As(err, &ee) {
+		return ee.code
+	}
+	fmt.Fprintf(log, "%s: %v\n", cmdName, err)
+	return 2 // what cobra refuses is a usage error
+}
+
+// legacyFlags are the single-dash long spellings the flag package accepted,
+// documented in the README, docs/install.md and the systemd units of every
+// release before v0.7.0. Each maps to its POSIX spelling.
+var legacyFlags = map[string]string{
+	"-config":  "--config",
+	"-once":    "--once",
+	"-version": "--version",
+	"-help":    "--help",
+}
+
+// normalizeArgs rewrites the legacy single-dash long flags (-once,
+// -config=PATH, -config PATH ...) to the POSIX form, so a deployed unit keeps
+// working, and says so once per flag on log. Nothing after "--" is touched, nor
+// the value that follows --config / -config.
+func normalizeArgs(args []string, log io.Writer) []string {
+	res := make([]string, 0, len(args))
+	warned := map[string]bool{}
+	valueNext := false
+	for i, a := range args {
+		if valueNext {
+			valueNext = false
+			res = append(res, a)
+			continue
+		}
+		if a == "--" {
+			return append(res, args[i:]...)
+		}
+		name, rest := a, ""
+		if j := strings.IndexByte(a, '='); j >= 0 {
+			name, rest = a[:j], a[j:]
+		}
+		if posix, ok := legacyFlags[name]; ok {
+			if !warned[name] {
+				warned[name] = true
+				fmt.Fprintf(log, "%s: warning: %s is deprecated, use %s (the single-dash spelling will be removed in a later release)\n", cmdName, name, posix)
+			}
+			a, name = posix+rest, posix
+		}
+		if name == "--config" && rest == "" {
+			valueNext = true
+		}
+		res = append(res, a)
+	}
+	return res
+}
+
+// RootCmd returns the top-level cobra command. Exported so tests drive it
+// through SetArgs, SetOut and SetErr without spawning a process.
+func RootCmd() *cobra.Command {
+	var (
+		path string
+		once bool
+	)
+	cmd := &cobra.Command{
+		Use:   cmdName + " [flags]",
+		Short: "Distribute SSH KRLs and X.509 CRLs",
+		Long: `authn-revokd fetches revocation lists, keeps only those that verify, writes
+them where sshd and TLS servers read them (failing closed for sshd when a list
+lapses) and, with listen, serves the verified copies as a mirror. SIGHUP syncs now.
+
+The single-dash spellings -config, -once, -version and -help of earlier
+releases are still accepted, with a deprecation warning on stderr.`,
+		Version:       version(),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runAgent(cmd, path, cmd.Flags().Changed("config"), once)
+		},
+	}
+	cmd.SetVersionTemplate(cmdName + " {{.Version}}\n")
+	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		fmt.Fprintf(c.ErrOrStderr(), "%s: %v\n", cmdName, err)
+		return &exitError{2}
+	})
+	cmd.Flags().StringVarP(&path, "config", "c", defaultConfig, "the configuration file")
+	cmd.Flags().BoolVarP(&once, "once", "o", false, "sync once and exit: 1 when a list is not current, or could not be fetched")
+	return cmd
+}
+
+func runAgent(cmd *cobra.Command, path string, explicit, once bool) error {
+	log := cmd.ErrOrStderr()
+	cfg, err := loadConfig(path)
 	if err != nil {
-		explicit := false
-		fs.Visit(func(f *flag.Flag) { explicit = explicit || f.Name == "config" })
-		fmt.Fprintf(log, "%s: %s: %v%s\n", cmdName, *path, err, migrationHint(explicit, *path, oldDefaultConfig))
-		return 2
+		fmt.Fprintf(log, "%s: %s: %v%s\n", cmdName, path, err, migrationHint(explicit, path, oldDefaultConfig))
+		return &exitError{2}
 	}
 	a, err := newAgent(cfg, log, nil)
 	if err != nil {
 		fmt.Fprintf(log, "%s: %v\n", cmdName, err)
-		return 1
+		return &exitError{1}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	hup, stopHUP := notifyHUP()
 	defer stopHUP()
 	a.wake = hup
-	if *once {
+	if once {
 		if err := a.syncOnce(ctx); err != nil {
 			fmt.Fprintf(log, "%s: %v\n", cmdName, err)
-			return 1
+			return &exitError{1}
 		}
-		return 0
+		return nil
 	}
 	if err := serve(ctx, a, cfg.Listen, log); err != nil {
 		fmt.Fprintf(log, "%s: %v\n", cmdName, err)
-		return 1
+		return &exitError{1}
 	}
-	return 0
+	return nil
 }
 
 // serve runs the agent, and the mirror when listen is set, until ctx ends.

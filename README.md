@@ -82,10 +82,17 @@ listen = ":8080"                             # optional: serve the verified list
 ```
 
 ```sh
-authn-revokd                    # run (-config /etc/authn-revokd/revokd.hcl by default); SIGHUP: sync now
-authn-revokd -once              # one sync, for a timer: exit 1 when a list is not current or could not be fetched
-authn-revokd -version
+authn-revokd                    # run (--config /etc/authn-revokd/revokd.hcl by default); SIGHUP: sync now
+authn-revokd --once             # one sync, for a timer: exit 1 when a list is not current or could not be fetched
+authn-revokd --version
+authn-revokd --help
 ```
+
+Flags are POSIX (cobra): `--config`/`-c`, `--once`/`-o`, `--version`/`-v`,
+`--help`/`-h`; `--config=PATH` works too. The single-dash long spellings of
+v0.6.x (`-config`, `-once`, `-version`, `-help`) are **still accepted**, with a
+deprecation line on stderr, so a deployed unit or timer keeps working; they
+will be removed in a later release. Exit statuses are unchanged (0, 1, 2).
 
 - **One file for sshd.** `RevokedKeys` takes a single file before OpenSSH 10.3
   (multiple files arrived with openssh-portable 135a622, 2026-02-11; Debian 13

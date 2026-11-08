@@ -68,8 +68,8 @@ func TestHelpExitsZero(t *testing.T) {
 	if code := run([]string{"-help"}, &out, &log); code != 0 {
 		t.Errorf("-help exited %d", code)
 	}
-	if !strings.Contains(log.String(), "-once") {
-		t.Errorf("-help did not print the flags: %q", log.String())
+	if !strings.Contains(out.String(), "--once") {
+		t.Errorf("-help did not print the flags: %q", out.String())
 	}
 }
 

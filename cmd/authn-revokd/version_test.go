@@ -17,7 +17,7 @@ import (
 // as authnd and authn-bridge do, so v=$(authn-revokd -version) captures it.
 func TestVersionNeedsNoConfiguration(t *testing.T) {
 	var out, log bytes.Buffer
-	if code := run([]string{"-config", "/nonexistent/revokd.hcl", "-version"}, &out, &log); code != 0 {
+	if code := run([]string{"--config", "/nonexistent/revokd.hcl", "--version"}, &out, &log); code != 0 {
 		t.Fatalf("exit %d: %s", code, log.String())
 	}
 	if log.Len() != 0 {
@@ -33,7 +33,7 @@ func TestVersionNeedsNoConfiguration(t *testing.T) {
 func TestErrorsNameTheCommand(t *testing.T) {
 	var out bytes.Buffer
 	missing := filepath.Join(t.TempDir(), "absent.hcl")
-	if code := run([]string{"-config", missing}, io.Discard, &out); code != 2 {
+	if code := run([]string{"--config", missing}, io.Discard, &out); code != 2 {
 		t.Fatalf("exit %d: %s", code, out.String())
 	}
 	if !strings.HasPrefix(out.String(), "authn-revokd: "+missing+": ") {
