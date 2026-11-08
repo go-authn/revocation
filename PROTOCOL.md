@@ -109,7 +109,11 @@ nginx (`authn-revokd`), a mirror (`authn-revokd` with `listen`).
    `thisUpdate`). A list lower than the one held is refused (TUF's *rollback
    attack*). An equal version with a later issue time is the same list
    re-issued with a new expiry, and replaces it. The copy held survives a
-   restart: it is the file written, read back at start.
+   restart: it is the file written, read back at start. A copy that does not
+   verify when read back is not used, but its version and issue time, read
+   without trust, still order what comes next (they can only make the
+   distributor refuse more, never accept more): the guard is not reset by a
+   damaged or foreign copy.
 3. **Never past its end.** A list whose expiry has passed is not current,
    whatever the distributor holds; and a distributor may bound it more tightly
    with its own `max_age` from the issue time.

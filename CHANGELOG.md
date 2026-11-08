@@ -3,6 +3,21 @@
 Versions follow [semantic versioning](https://semver.org); below v1.0.0 a
 breaking change bumps the minor version.
 
+## v0.6.8
+
+### Fixed
+
+- **An unverifiable state copy dropped the rollback guard** (#25). A state
+  file that was damaged, or written under another CA key, did not verify and
+  was treated as no copy held, so a replayed older list, signed and
+  unexpired, was accepted and un-revoked what the newer one revoked. Its
+  version and issue time are now read without trusting them and kept as an
+  ordering floor (`revocation.Source.Floor`, `UnverifiedOrder`, `Floor.Admits`,
+  PROTOCOL.md rule 2): a list below it is refused as a rollback until one that
+  verifies and follows it is held; its content is never used. The log says
+  so, and names the file to remove if the CA was replaced and its lists
+  restart at a lower version.
+
 ## v0.6.7
 
 Audit, fuzzing, chaos and performance pass. Every item below was proved by a

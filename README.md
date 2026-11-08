@@ -121,7 +121,12 @@ authn-revokd -version
 - **The state** is one file per source, holding the list and its signature,
   written by a single rename and the directory fsynced. A crash cannot leave a
   pair that fails to verify and thereby take the rollback guard with it. A
-  v0.1 state (two files) is read once and replaced.
+  v0.1 state (two files) is read once and replaced. A copy that still does not
+  verify (damaged, or written under another CA key) is not used, and is said
+  in the log, but its version and issue time are read without trust and keep
+  ordering what comes next: a list older than it is refused as a rollback
+  until one that verifies and follows it is held. If the CA was replaced and
+  its lists restart at a lower version, remove the `<source>.state` file.
 - **No reload for sshd.** sshd reads `RevokedKeys` at each authentication, so
   the atomic rename is enough. An unreadable file refuses every login
   (sshd_config(5)).

@@ -57,34 +57,50 @@ func decodeState(b []byte) (raw, sig []byte, err error) {
 
 // loadHeld reads back the copy kept from before. Expired or not, it orders
 // what comes next: a restart must not let an older list in.
-func (a *agent) loadHeld(s *sourceBlock) (*revocation.List, error) {
+//
+// ⛔ A copy that does not verify (damaged, or written under another CA key)
+// is not used, but it is not forgotten either: its version and issue time
+// are returned as a floor, read without trust, so that a replayed older list
+// -- signed and unexpired -- is still refused (PROTOCOL.md rule 2). Before
+// this, the guard went with the copy.
+func (a *agent) loadHeld(s *sourceBlock) (*revocation.List, *revocation.Floor, error) {
 	data, err := os.ReadFile(a.stateFile(s))
 	var raw, sig []byte
 	switch {
 	case err == nil:
 		if raw, sig, err = decodeState(data); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	case errors.Is(err, os.ErrNotExist):
 		// A v0.1 state: the list, and a KRL's signature beside it.
 		old := filepath.Join(a.cfg.StateDir, s.Name)
 		if raw, err = os.ReadFile(old); errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+			return nil, nil, nil
 		} else if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if s.kind == revocation.KRL {
 			if sig, err = os.ReadFile(old + ".sig"); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	default:
-		return nil, err
+		return nil, nil, err
 	}
+	var l *revocation.List
 	if s.kind == revocation.CRL {
-		return revocation.VerifyCRL(raw, s.x509CA)
+		l, err = revocation.VerifyCRL(raw, s.x509CA)
+	} else {
+		l, err = revocation.VerifyKRL(raw, sig, s.sshCA)
 	}
-	return revocation.VerifyKRL(raw, sig, s.sshCA)
+	if err == nil {
+		return l, nil, nil
+	}
+	floor, ferr := revocation.UnverifiedOrder(s.kind, raw)
+	if ferr != nil {
+		return nil, nil, fmt.Errorf("%w (and its position cannot be read either: %v)", err, ferr)
+	}
+	return nil, floor, err
 }
 
 // keep writes a verified list to the state directory, in one rename, and

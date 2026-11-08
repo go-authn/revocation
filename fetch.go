@@ -42,6 +42,11 @@ type Source struct {
 	// One clock for the fetcher and its caller, or they disagree on what
 	// is current.
 	Clock func() time.Time
+	// Floor, when not nil, is the position of a copy that was kept but did not
+	// verify (see UnverifiedOrder): until a list that verifies is held, one
+	// that does not follow it is refused as a rollback. It orders, it is
+	// never used.
+	Floor *Floor
 }
 
 // FilePath is the local path a file:// URL names: file:///etc/x is
@@ -228,6 +233,11 @@ func (f *Fetcher) fetch(ctx context.Context) (bool, error) {
 	}
 	if err := l.Follows(held); err != nil {
 		return false, fmt.Errorf("%s: %w", shown, err)
+	}
+	if held == nil && f.src.Floor != nil {
+		if err := f.src.Floor.Admits(l); err != nil {
+			return false, fmt.Errorf("%s: %w", shown, err)
+		}
 	}
 	f.mu.Lock()
 	f.held, f.etag = l, tag
