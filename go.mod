@@ -1,6 +1,6 @@
 module github.com/go-authn/revocation
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/go-authn/krl v0.6.1
