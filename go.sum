@@ -9,12 +9,12 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/ebitengine/purego v0.11.2 h1:WWiTx8rD8zYdOwSj8O/NiNbsOvSAgJMTlyV1XlbUSeU=
 github.com/ebitengine/purego v0.11.2/go.mod h1:DCHPP08djqhNSoTfImcnHYQRZmd0qhakvrozqaEYhGQ=
-github.com/go-authn/harden v0.1.0 h1:8ocSIjHGzMhSaWh2g2QCZroo9eC7i+1gyWmBgaDvCpw=
-github.com/go-authn/harden v0.1.0/go.mod h1:whEYokEtB2OBsHeKVjZv9Za73BqiQSvpFhgO4QIn7XQ=
+github.com/go-authn/harden v0.2.0 h1:xPWLSeelcFEo4gJU5aTNWngZn6R/VQ9bTGDx3BRrUb0=
+github.com/go-authn/harden v0.2.0/go.mod h1:sceLxhnMHtExHEp9bU8XHKCw2fp+WFjh6Ri6Yxu2aVA=
 github.com/go-authn/krl v0.6.1 h1:m3DrENpuM3F8IjTFGxeVy0H6O0/wz3F45kCzIVI6PVA=
 github.com/go-authn/krl v0.6.1/go.mod h1:BfhDfQ7cQa+ls3SylzE/xbI/7Mu2AOXIJfeIw9XTbM0=
-github.com/go-authn/secretsource v0.8.0 h1:3pUW2vvuftmeikSrxY5a9ZMye5Y8BTplMEKfc7IeeXU=
-github.com/go-authn/secretsource v0.8.0/go.mod h1:LHIVIzADGmzgE5IwtqTmKMcwM6RGvUXX+qZQojtmzlM=
+github.com/go-authn/secretsource v0.9.0 h1:N2y+g1LIhtC9+u42IGCNcqB2s6deZ5YUeJt1yGBWyfw=
+github.com/go-authn/secretsource v0.9.0/go.mod h1:59e2lgmXt36JIyrCjlYjLG5BYG+umxYJSAmHb5J+gfk=
 github.com/go-freedesktop/secretservice v0.4.0 h1:PV2fLZ/ZsL2R5T6CMBOQ/5lmwP73rUJ1PN0FG6v5gQ0=
 github.com/go-freedesktop/secretservice v0.4.0/go.mod h1:JQ2M/y+g4Img7KM2bleUTz2EruH9fpkJ4GHqQpYVAMo=
 github.com/go-macos/keychain v0.3.1 h1:pH/sxiVCTqj2rafKiWsufWKrRlHZ7YRNiePgrMieRQs=

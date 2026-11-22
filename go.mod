@@ -3,9 +3,9 @@ module github.com/go-authn/revocation
 go 1.27.4
 
 require (
-	github.com/go-authn/harden v0.1.0
+	github.com/go-authn/harden v0.2.0
 	github.com/go-authn/krl v0.6.1
-	github.com/go-authn/secretsource v0.8.0
+	github.com/go-authn/secretsource v0.9.0
 	github.com/hashicorp/hcl/v2 v2.25.0
 	github.com/hiddeco/sshsig v0.2.0
 	github.com/spf13/cobra v1.10.2
