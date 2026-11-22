@@ -59,6 +59,12 @@ Conflicts=authn-revokd-once.timer authn-revokd-once.service
 [Service]
 Type=exec
 ExecStart=/usr/local/bin/authn-revokd --config /etc/authn-revokd/revokd.hcl
+# Only for a source whose URL carries a credential (url_from = "systemd-creds:univ-a-url").
+# Seal it with `systemd-creds encrypt --with-key=host+tpm2 --name=univ-a-url - OUT`
+# (never a bare --tpm2-pcrs=7). If the TPM2 chip, host key or firmware
+# measurements change the service fails closed: re-seal from the offline copy
+# of the URL and restart.
+#LoadCredentialEncrypted=univ-a-url:/etc/credstore.encrypted/univ-a-url.cred
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5s

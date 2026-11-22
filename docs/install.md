@@ -101,13 +101,22 @@ one `source` (each with a `url` and either `ssh_ca` or `x509_ca`), and an
 `output` for each file a server reads (each with a `path` and its `sources`).
 Every other key is optional.
 
+A source URL that carries a password or a token does not go in `url` (it is
+refused): write `url_from = "systemd-creds:NAME"`, seal the URL with
+`systemd-creds encrypt --with-key=host+tpm2 --name=NAME - /etc/credstore.encrypted/NAME.cred`
+(never a bare `--tpm2-pcrs=7`) and add
+`LoadCredentialEncrypted=NAME:/etc/credstore.encrypted/NAME.cred` to the unit.
+If the TPM2 chip, the host key or the firmware measurements change, the service
+fails closed: re-seal from your offline copy of the URL and restart it. See the
+README, "A source that needs a credential".
+
 ```hcl
 state_dir = "/var/lib/authn-revokd/state"   # required: absolute, 0700, created if missing
 refresh   = "1m"                            # optional, default 1m
 
 # A go-authn/bridge serves its KRL at /ssh/krl and the signature at /ssh/krl.sig.
 source "univ-a-ssh" {
-  url    = "https://idp.univ-a.example/ssh/krl"           # required
+  url    = "https://idp.univ-a.example/ssh/krl"           # required: url, or url_from for one that carries a credential
   ssh_ca = "/etc/authn-revokd/ca/univ-a-ssh.pub"     # required: ssh_ca or x509_ca
 }
 

@@ -3,6 +3,17 @@
 Versions follow [semantic versioning](https://semver.org); below v1.0.0 a
 breaking change bumps the minor version.
 
+## v0.8.0
+
+- Added: a `source` takes `url_from`, a go-authn/secretsource reference (v0.8.0)
+  such as `systemd-creds:NAME`, for a URL that carries a credential. Exactly one
+  of `url` and `url_from`. A `url` is now **refused** when it carries a
+  password (`user:pass@`) or a query parameter named like a credential
+  (`token`, `api_key`, `secret`...): move it to `url_from`. Breaking below v1:
+  such a configuration no longer starts.
+- Documented `LoadCredentialEncrypted=` with `--with-key=host+tpm2` and the
+  re-seal path.
+
 ## v0.7.2
 
 - `authn-revokd` writes its state file with `github.com/go-authn/harden/privfile`
