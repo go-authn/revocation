@@ -86,7 +86,9 @@ func TestAURLWithACredentialIsRefused(t *testing.T) {
 		}
 	}
 	// The control: a plain URL, and a user name alone (no secret), are not refused.
-	for _, u := range []string{"https://idp.example/krl", "https://reader@idp.example/krl?v=2", "file:///var/krl"} {
+	for _, u := range []string{"https://idp.example/krl", "https://reader@idp.example/krl?v=2", "file:///var/krl",
+		"http://[::1/krl", // does not parse: NewFetcher refuses it, with the URL redacted
+	} {
 		if err := (&sourceBlock{URL: u}).resolveURL(); err != nil {
 			t.Errorf("%s: %v", u, err)
 		}
