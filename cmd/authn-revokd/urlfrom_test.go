@@ -87,11 +87,19 @@ func TestAURLWithACredentialIsRefused(t *testing.T) {
 	}
 	// The control: a plain URL, and a user name alone (no secret), are not refused.
 	for _, u := range []string{"https://idp.example/krl", "https://reader@idp.example/krl?v=2", "file:///var/krl",
-		"http://[::1/krl", // does not parse: NewFetcher refuses it, with the URL redacted
 	} {
 		if err := (&sourceBlock{URL: u}).resolveURL(); err != nil {
 			t.Errorf("%s: %v", u, err)
 		}
+	}
+}
+
+// A URL that does not parse is refused without quoting it: the parse error
+// would print a password that sits in it.
+func TestAURLThatDoesNotParseIsRefusedWithoutQuotingIt(t *testing.T) {
+	err := (&sourceBlock{URL: "http://user:s3cret@[::1/krl"}).resolveURL()
+	if err == nil || !strings.Contains(err.Error(), "does not parse") || strings.Contains(err.Error(), "s3cret") {
+		t.Fatalf("got %v", err)
 	}
 }
 

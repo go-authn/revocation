@@ -51,7 +51,8 @@ func (s *sourceBlock) resolveURL() error {
 func checkNoCredential(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil // NewFetcher refuses it, with the URL redacted
+		// The parse error quotes the URL, which may carry a credential: not here.
+		return errors.New("url does not parse")
 	}
 	const hint = "put the URL in a secretsource reference instead: url_from = \"systemd-creds:NAME\""
 	if u.User != nil {
