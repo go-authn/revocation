@@ -3,6 +3,15 @@
 Versions follow [semantic versioning](https://semver.org); below v1.0.0 a
 breaking change bumps the minor version.
 
+## v0.7.2
+
+- `authn-revokd` writes its state file with `github.com/go-authn/harden/privfile`
+  (the same 0600 temporary file, sync and rename, now shared with wireguard,
+  kinit and secretsource). It also refuses a state directory that is a
+  symlink, belongs to another user or is writable by group or others, at the
+  moment of the write and not only at start. The mode-parameterised
+  `writeAtomic` stays for the published list, which is 0644 on purpose.
+
 ## v0.7.1
 
 ### Fixed
