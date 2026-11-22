@@ -49,7 +49,11 @@ func (s *sourceBlock) resolveURL() error {
 // checkNoCredential refuses a URL that carries a password or a token. It says
 // what was found, never the value.
 func checkNoCredential(raw string) error {
-	u, err := url.Parse(raw)
+	p, err := url.Parse(raw)
+	var u url.URL // a value, so that the checks below never meet a nil
+	if p != nil {
+		u = *p
+	}
 	if err != nil {
 		// The parse error quotes the URL, which may carry a credential: not here.
 		return errors.New("url does not parse")
