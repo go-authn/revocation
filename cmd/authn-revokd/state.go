@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/go-authn/harden/privfile"
 	"github.com/go-authn/revocation"
 )
 
@@ -106,7 +107,7 @@ func (a *agent) loadHeld(s *sourceBlock) (*revocation.List, *revocation.Floor, e
 // keep writes a verified list to the state directory, in one rename, and
 // then removes a v0.1 state the new file supersedes.
 func (a *agent) keep(s *sourceBlock, l *revocation.List) error {
-	if err := writeAtomic(a.stateFile(s), encodeState(l), 0o600); err != nil {
+	if err := privfile.Write(a.stateFile(s), encodeState(l)); err != nil {
 		return err
 	}
 	old := filepath.Join(a.cfg.StateDir, s.Name)
