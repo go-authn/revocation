@@ -60,11 +60,15 @@ type config struct {
 }
 
 type sourceBlock struct {
-	Name   string `hcl:"name,label"`
-	URL    string `hcl:"url"`
-	SSHCA  string `hcl:"ssh_ca,optional"`
-	X509CA string `hcl:"x509_ca,optional"`
-	MaxAge string `hcl:"max_age,optional"`
+	Name string `hcl:"name,label"`
+	URL  string `hcl:"url,optional"`
+	// URLFrom is a secretsource reference to the URL, for one that carries a
+	// credential (user:password@host, or a token in the query). A url that
+	// carries one in the configuration is refused.
+	URLFrom string `hcl:"url_from,optional"`
+	SSHCA   string `hcl:"ssh_ca,optional"`
+	X509CA  string `hcl:"x509_ca,optional"`
+	MaxAge  string `hcl:"max_age,optional"`
 	// RevokeKeys trusts the source's list to revoke any public key, of any
 	// CA's users, in an output it shares with other sources.
 	RevokeKeys bool `hcl:"revoke_keys,optional"`
@@ -194,8 +198,8 @@ func (c *config) check() error {
 }
 
 func (s *sourceBlock) load() error {
-	if s.URL == "" {
-		return errors.New("no url")
+	if err := s.resolveURL(); err != nil {
+		return err
 	}
 	switch {
 	case s.SSHCA != "" && s.X509CA != "":

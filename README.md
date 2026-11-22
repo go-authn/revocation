@@ -81,6 +81,54 @@ output "nginx" {                             # nginx: ssl_crl /var/lib/authn-rev
 listen = ":8080"                             # optional: serve the verified lists (a mirror)
 ```
 
+### A source that needs a credential: `url_from`
+
+The lists are public and authenticated by their signature, so most sources need
+no secret. A source behind a password or a token (`https://user:pass@host/...`,
+`.../krl?token=...`) names its URL by a
+[go-authn/secretsource](https://github.com/go-authn/secretsource) reference
+(v0.8.0) instead of writing it in the configuration:
+
+```hcl
+source "univ-a-ssh" {
+  url_from = "systemd-creds:univ-a-url"   # exactly one of url and url_from
+  ssh_ca   = "/etc/ssh/ca/univ-a.pub"     # a public key: stays a file
+}
+```
+
+A `url` that carries a password, or a query parameter named like a credential
+(`token`, `access_token`, `api_key`, `key`, `secret`, `password`, `sig`...), is
+**refused**, and the message says to use `url_from` (best effort: the control
+that holds what the check misses is `url_from`). Setting both `url` and
+`url_from` is an error. The URL is read at start and held in memory; errors and
+logs already print it without its password or query.
+
+Everything else in the configuration is public by design: the CA keys
+(`ssh_ca`, `x509_ca`) are public keys and certificates, `state_dir` holds the
+verified public lists (written 0600 by `harden/privfile`), the mirror
+(`listen`) serves those lists without authentication, and `on_change` is a
+command line with no secret. authn-revokd holds no signing key: it only
+verifies.
+
+With systemd, seal the URL to the machine and let the unit place it:
+
+```sh
+printf %s 'https://user:pass@idp.univ-a.example/ssh/krl' |
+  systemd-creds encrypt --with-key=host+tpm2 --name=univ-a-url - /etc/credstore.encrypted/univ-a-url.cred
+```
+
+```ini
+# in the service (see packaging/systemd/authn-revokd.service)
+LoadCredentialEncrypted=univ-a-url:/etc/credstore.encrypted/univ-a-url.cred
+```
+
+`--with-key=host+tpm2` with no `--tpm2-pcrs` survives firmware updates; never
+seal with a bare `--tpm2-pcrs=7`. **Recovery**: the credential is lost with the
+TPM2 chip or `/var/lib/systemd/credential.secret`, or fails to decrypt after a
+firmware or PCR change (the service then fails closed, and says the credential
+may need re-sealing). Keep the URL in an offline copy, run `systemd-creds
+encrypt` again from it, and restart the service.
+
 ```sh
 authn-revokd                    # run (--config /etc/authn-revokd/revokd.hcl by default); SIGHUP: sync now
 authn-revokd --once             # one sync, for a timer: exit 1 when a list is not current or could not be fetched
