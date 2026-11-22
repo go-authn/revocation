@@ -3,6 +3,17 @@
 Versions follow [semantic versioning](https://semver.org); below v1.0.0 a
 breaking change bumps the minor version.
 
+## v0.7.1
+
+### Fixed
+
+- **A CRL with a non-critical issuingDistributionPoint was read as a complete
+  list.** RFC 5280 5.2.5: the extension scopes a CRL (a partition, user
+  certificates only, ...) and a reader that does not support it must treat a
+  certificate not listed as unknown. `VerifyCRL` refused it only when the
+  issuer marked it critical (which the RFC says it MUST); it now refuses it
+  either way. From the 2026-11-21 security audit.
+
 ## v0.7.0
 
 ### Changed

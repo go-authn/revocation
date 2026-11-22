@@ -124,13 +124,16 @@ var (
 	oidCRLNumber      = asn1.ObjectIdentifier{2, 5, 29, 20}
 	oidAuthorityKeyID = asn1.ObjectIdentifier{2, 5, 29, 35}
 	oidDeltaCRL       = asn1.ObjectIdentifier{2, 5, 29, 27}
+
+	oidIssuingDistPoint = asn1.ObjectIdentifier{2, 5, 29, 28}
 )
 
 // VerifyCRL checks a CRL, DER or PEM, against the CA certificate ca. It
 // refuses: a signature by anything else, or an issuer that is not ca's
 // subject; a CRL with no number or no nextUpdate, which could be neither
 // ordered nor aged; a delta CRL, which only means something with its base
-// (RFC 5280 5.2.4); and a critical extension it does not understand, nor any
+// (RFC 5280 5.2.4); an issuingDistributionPoint, critical or not, which
+// scopes the CRL to a partition (5.2.5); and a critical extension it does not understand, nor any
 // critical entry extension.
 func VerifyCRL(raw []byte, ca *x509.Certificate) (*List, error) {
 	if ca == nil {
@@ -179,6 +182,13 @@ func VerifyCRL(raw []byte, ca *x509.Certificate) (*List, error) {
 		switch {
 		case e.Id.Equal(oidDeltaCRL):
 			return nil, errors.New("revocation: a delta CRL, which means nothing without its base")
+		case e.Id.Equal(oidIssuingDistPoint):
+			// RFC 5280 5.2.5: the extension scopes the CRL (one partition, only
+			// user certificates, ...); a reader that does not support it must
+			// treat a certificate not listed as unknown. Critical or not -- the
+			// issuer MUST mark it critical, and a CRL that does not is no more
+			// complete for it.
+			return nil, errors.New("revocation: the CRL has an issuingDistributionPoint, so it may be one partition of the revocations (RFC 5280 5.2.5)")
 		case e.Critical && !e.Id.Equal(oidCRLNumber) && !e.Id.Equal(oidAuthorityKeyID):
 			return nil, fmt.Errorf("revocation: the CRL has a critical extension %v this reader does not understand", e.Id)
 		}
