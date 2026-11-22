@@ -17,6 +17,42 @@ import (
 	"github.com/go-authn/krl"
 )
 
+// The state is written owner-only, and a state directory that became writable
+// by others after start is refused at the write, not only at start: a list
+// the agent could not keep is reported, not silently trusted to a directory
+// somebody else can swap files in (go-authn/harden's privfile).
+func TestTheStateFileIsPrivateAndNotKeptInAWritableDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("modes are Unix")
+	}
+	dir := t.TempDir()
+	is := newSSHIssuer(t)
+	is.issue(5, time.Now(), time.Hour, 10)
+	srv := httptest.NewTLSServer(is)
+	defer srv.Close()
+	state := filepath.Join(dir, "state")
+	a := agentFor(t, dir, fmt.Sprintf("state_dir = %q\nsource \"a\" {\n  url = %q\n  ssh_ca = %q\n}\n",
+		state, srv.URL+"/krl", is.caFile(t, dir, "a.pub")), srv.Client())
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.syncOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(a.stateFile(&a.cfg.Sources[0]))
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("state file: %v, %v: want mode 0600", fi, err)
+	}
+	if err := os.Chmod(state, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	is.issue(6, time.Now(), time.Hour, 10, 11)
+	err = a.syncOnce(context.Background())
+	if log := a.log.(*safeBuffer).String(); err == nil || !strings.Contains(log, "keeping it") {
+		t.Errorf("a list that could not be kept: %v; log %q", err, log)
+	}
+}
+
 // A v0.1 state -- the list and its signature as two files -- is read once,
 // and replaced by the one-file state at the next change.
 func TestAV01StateIsCarriedOver(t *testing.T) {
